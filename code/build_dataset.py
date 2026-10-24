@@ -17,12 +17,16 @@ EXPERIMENT_ROOT = Path(__file__).resolve().parents[1]
 INPUT_ROOT = EXPERIMENT_ROOT / "inputs"
 OUTPUT_ROOT = EXPERIMENT_ROOT / "derived_data"
 MEASUREMENT_PREFIX = "measurement__"
+NATURAL_LABEL = "\u81ea\u7136"
+LEGACY_SAMPLE_NAME_COLUMN = "\u6837\u672c\u540d"
+LEGACY_PERSON_NAME_COLUMN = "\u59d3\u540d"
+NAME_COLUMN_CANDIDATES = ("name", LEGACY_PERSON_NAME_COLUMN, "sample_name", LEGACY_SAMPLE_NAME_COLUMN)
 
 NEW_FEATURE_COLUMNS = [
-    f"{MEASUREMENT_PREFIX}Ns-Gl(自然)(mm)",
-    f"{MEASUREMENT_PREFIX}Prn-Ns(自然)(mm)",
-    f"{MEASUREMENT_PREFIX}Ns-Sn(自然)(mm)",
-    f"{MEASUREMENT_PREFIX}Sn-UL(自然)(mm)",
+    f"{MEASUREMENT_PREFIX}Ns-Gl({NATURAL_LABEL})(mm)",
+    f"{MEASUREMENT_PREFIX}Prn-Ns({NATURAL_LABEL})(mm)",
+    f"{MEASUREMENT_PREFIX}Ns-Sn({NATURAL_LABEL})(mm)",
+    f"{MEASUREMENT_PREFIX}Sn-UL({NATURAL_LABEL})(mm)",
     f"{MEASUREMENT_PREFIX}Gl-Ns-Prn(°)",
     f"{MEASUREMENT_PREFIX}Ns-Prn-Sn(°)",
     f"{MEASUREMENT_PREFIX}Prn-Sn-UL(°)",
@@ -44,6 +48,13 @@ def load_reference_metrics_module():
 
 
 METRICS = load_reference_metrics_module()
+
+
+def find_name_column(columns: Iterable[str]) -> str:
+    column = next((candidate for candidate in NAME_COLUMN_CANDIDATES if candidate in columns), None)
+    if column is None:
+        raise ValueError("No subject-name column was found in the input table")
+    return column
 
 
 def finite_point(points: Mapping[str, Tuple[float, float]], name: str) -> Tuple[float, float]:
@@ -173,7 +184,14 @@ def make_added_male_rows(
 
     labels_path = INPUT_ROOT / "labels" / "supplementary_dataset.csv"
     label_df = pd.read_csv(labels_path, encoding="utf-8-sig")
-    required = {"姓名", "stage", "beauty_score", "is_beautiful"}
+    required = {"stage", "beauty_score", "is_beautiful"}
+    person_name_column = next(
+        (candidate for candidate in ("name", LEGACY_PERSON_NAME_COLUMN) if candidate in label_df.columns),
+        None,
+    )
+    if person_name_column is None:
+        required.add("name or the original localized subject-name column")
+        person_name_column = LEGACY_PERSON_NAME_COLUMN
     missing = required - set(label_df.columns)
     if missing:
         raise ValueError(f"Supplementary score snapshot missing columns: {sorted(missing)}")
@@ -187,7 +205,7 @@ def make_added_male_rows(
         if name in seen_names:
             raise ValueError(f"Multiple annotations found for new male {name!r}")
         seen_names.add(name)
-        matches = label_df[label_df["姓名"].astype(str).str.strip() == name]
+        matches = label_df[label_df[person_name_column].astype(str).str.strip() == name]
         if len(matches) != 1:
             raise ValueError(f"Expected one source rating for {name!r}, found {len(matches)}")
         label = matches.iloc[0]
@@ -201,8 +219,6 @@ def make_added_male_rows(
         row = {column: None for column in male_column_list}
         row.update(
             {
-                "样本名": name,
-                "姓名": name,
                 "stage": "post",
                 "split": "not_assigned_before_random_split",
                 "image": f"{name}.bmp",
@@ -210,6 +226,9 @@ def make_added_male_rows(
                 "is_beautiful": int(label["is_beautiful"]),
             }
         )
+        for name_column in ("sample_name", "name", LEGACY_SAMPLE_NAME_COLUMN, LEGACY_PERSON_NAME_COLUMN):
+            if name_column in row:
+                row[name_column] = name
         row.update(legacy_features)
         row.update(new_features)
         rows.append(row)
@@ -271,8 +290,9 @@ def validate_output(
     if not np.isfinite(numeric.to_numpy(dtype=float)).all():
         bad_columns = numeric.columns[~np.isfinite(numeric.to_numpy(dtype=float)).all(axis=0)].tolist()
         raise ValueError(f"{label}: non-finite feature/target values found in {bad_columns}")
-    if df["样本名"].duplicated().any():
-        duplicated = df.loc[df["样本名"].duplicated(keep=False), "样本名"].astype(str).tolist()
+    sample_name_column = next((column for column in NAME_COLUMN_CANDIDATES if column in df.columns), None)
+    if sample_name_column is not None and df[sample_name_column].duplicated().any():
+        duplicated = df.loc[df[sample_name_column].duplicated(keep=False), sample_name_column].astype(str).tolist()
         raise ValueError(f"{label}: duplicate sample IDs found: {duplicated[:10]}")
 
 
@@ -289,9 +309,11 @@ def main() -> None:
     if female_legacy_columns != male_legacy_columns:
         raise ValueError("female.xlsx and male.xlsx use different feature names or feature order")
 
-    male_names = set(male["姓名"].astype(str))
+    male_name_column = find_name_column(male.columns)
+    male_names = set(male[male_name_column].astype(str))
     added = make_added_male_rows(male.columns, male_legacy_columns)
-    added_names = set(added["姓名"].astype(str))
+    added_name_column = find_name_column(added.columns)
+    added_names = set(added[added_name_column].astype(str))
     overlap = male_names & added_names
     if overlap:
         raise ValueError(f"New male samples overlap existing male patients: {sorted(overlap)}")

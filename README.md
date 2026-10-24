@@ -1,18 +1,22 @@
-# 美学评分预测源码
+# Facial Aesthetic Score Prediction
 
-本仓库整理了 50 项和 57 项测量特征的美学评分预测流程，包含数据构建、特征计算、模型训练、评估和可视化代码。仓库不包含任何原始或派生数据、图像、标注、评分、训练结果或模型文件。
+This repository contains source code for the 50-feature and 57-feature facial aesthetic score prediction experiments. It includes landmark-based feature construction, model training, evaluation, and visualization utilities.
 
-## 运行环境
+## Data availability
 
-建议使用 Python 3.9，并安装依赖：
+No raw or derived datasets, images, annotations, score labels, trained models, or experiment outputs are included. Prepare the inputs locally before running the scripts. The `.gitignore` file excludes local input data, derived datasets, and generated outputs.
+
+## Environment
+
+Python 3.9 is recommended. Install the listed dependencies with:
 
 ```powershell
 pip install -r requirements.txt
 ```
 
-## 本地数据结构
+## Expected local input layout
 
-数据需要由使用者自行准备并放入 `inputs/`。该目录已加入 `.gitignore`，其中的文件不会上传。
+Place the required files under `inputs/`:
 
 ```text
 inputs/
@@ -28,28 +32,28 @@ inputs/
       post.csv
       rotation.csv
   new_male_annotations/
-    <annotation files>.json
+    <annotation-files>.json
   labels/
     supplementary_dataset.csv
 ```
 
-新增 JSON 标注应包含标志点 `points` 和自然头位旋转角 `rotation`；评分表应包含姓名、阶段和评分字段。原始数据不随本仓库提供。
+Landmark annotations use the `points` array and a `rotation` value. Score-label tables should provide the subject name, treatment stage, `beauty_score`, and `is_beautiful` fields. The builder also accepts the original localized subject-name column for compatibility.
 
-## 构建与训练
+## Build and train
 
-在仓库根目录运行：
+Run these commands from the repository root:
 
 ```powershell
 python code/build_dataset.py
 python code/train_models.py --features all
 ```
 
-构建脚本会在本地生成 50 项和 57 项特征数据；训练脚本分别运行两组特征。也可以用 `--features 50` 或 `--features 57` 单独运行。生成的派生数据和训练输出均保存在本地，并由 `.gitignore` 排除。
+The dataset builder creates 50-feature and 57-feature datasets. The training command runs both feature groups; use `--features 50` or `--features 57` to run one group. Generated datasets are written under `derived_data/`, and model outputs are written under `outputs/`.
 
-Sn-UL 按自然头位下的有符号垂直距离计算：
+The added Sn-UL measure is the signed vertical distance from UL to the horizontal line through Sn, normalized by the 10 mm reference scale:
 
 ```text
 (y_UL - y_Sn) / (distance(R1, R2) / 10)
 ```
 
-图像坐标的 y 轴向下为正，因此 UL 在 Sn 下方时该值为正。
+Image coordinates increase downward along the y-axis, so UL below Sn produces a positive value.

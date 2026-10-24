@@ -55,7 +55,7 @@ from sklearn.svm import SVR
 warnings.filterwarnings("ignore")
 
 # =========================
-# 路径配置
+# Path configuration
 # =========================
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATASET_CSV = PROJECT_ROOT / "inputs" / "all_dataset.csv"
@@ -78,7 +78,9 @@ TOP_N_FEATURES = 30
 SHAP_BACKGROUND_SIZE = 100
 SHAP_EVAL_SIZE = 100
 
-ID_COLUMNS = ["样本名", "姓名", "stage", "split", "image", "excel_batch"]
+LEGACY_SAMPLE_NAME_COLUMN = "\u6837\u672c\u540d"
+LEGACY_PERSON_NAME_COLUMN = "\u59d3\u540d"
+ID_COLUMNS = ["sample_name", "name", LEGACY_SAMPLE_NAME_COLUMN, LEGACY_PERSON_NAME_COLUMN, "stage", "split", "image", "excel_batch"]
 TARGET_COLUMN = "beauty_score"
 AUX_CLASS_COLUMN = "is_beautiful"
 FEATURE_PREFIX = "measurement__"
@@ -136,15 +138,20 @@ def load_dataset():
     df = pd.read_csv(DATASET_CSV, encoding="utf-8-sig")
     feature_columns = [col for col in df.columns if col.startswith(FEATURE_PREFIX)]
     if not feature_columns:
-        raise ValueError(f"{DATASET_CSV} 中没有找到 {FEATURE_PREFIX} 开头的 measurement 特征列")
+        raise ValueError(f"No measurement feature columns starting with {FEATURE_PREFIX!r} were found in {DATASET_CSV}")
     if TARGET_COLUMN not in df.columns:
-        raise ValueError(f"{DATASET_CSV} 缺少回归目标列: {TARGET_COLUMN}")
+        raise ValueError(f"Regression target column {TARGET_COLUMN!r} is missing from {DATASET_CSV}")
 
     df = df.dropna(subset=feature_columns + [TARGET_COLUMN]).reset_index(drop=True)
     if AUX_CLASS_COLUMN not in df.columns:
         df[AUX_CLASS_COLUMN] = (df[TARGET_COLUMN] >= BEAUTIFUL_THRESHOLD).astype(int)
 
-    name_column = "姓名" if "姓名" in df.columns else "样本名"
+    name_column = next(
+        (column for column in ("name", LEGACY_PERSON_NAME_COLUMN, "sample_name", LEGACY_SAMPLE_NAME_COLUMN) if column in df.columns),
+        None,
+    )
+    if name_column is None:
+        raise ValueError(f"No subject-name column was found in {DATASET_CSV}")
     batch_df = load_patient_batch_map()
     df["name_key"] = df[name_column].map(normalize_name)
     df = df.merge(batch_df, on="name_key", how="left")
@@ -158,9 +165,9 @@ def load_dataset():
     test_df = df.loc[test_mask].copy()
 
     if train_df.empty:
-        raise ValueError(f"{DATASET_CSV} 中没有可用于训练的样本（excel_batch 不在 {TEST_BATCHES}）")
+        raise ValueError(f"No training samples remain in {DATASET_CSV} (excel_batch is not in {TEST_BATCHES})")
     if test_df.empty:
-        raise ValueError(f"{DATASET_CSV} 中没有固定测试批次样本（excel_batch in {TEST_BATCHES}）")
+        raise ValueError(f"No holdout samples with a fixed test batch in {DATASET_CSV} (excel_batch in {TEST_BATCHES})")
 
     train_df = train_df.reset_index(drop=True)
     test_df = test_df.reset_index(drop=True)
@@ -181,12 +188,12 @@ def build_models():
         "LinearRegression": {
             "estimator": LinearRegression(),
             "param_distributions": {},
-            "search_note": "无关键超参，作为线性基线直接拟合。",
+            "search_note": "No key hyperparameters; fit directly as a linear baseline.",
         },
         "RidgeCV": {
             "estimator": RidgeCV(alphas=alphas),
             "param_distributions": {},
-            "search_note": "模型内部已用交叉验证选择 L2 正则强度 alpha。",
+            "search_note": "The estimator uses internal cross-validation to select the L2 regularization strength alpha.",
         },
         "LassoCV": {
             "estimator": LassoCV(
@@ -197,7 +204,7 @@ def build_models():
                 n_jobs=-1,
             ),
             "param_distributions": {},
-            "search_note": "模型内部已用交叉验证选择 L1 正则强度 alpha。",
+            "search_note": "The estimator uses internal cross-validation to select the L1 regularization strength alpha.",
         },
         "ElasticNetCV": {
             "estimator": ElasticNetCV(
@@ -208,13 +215,13 @@ def build_models():
                 random_state=RANDOM_STATE,
             ),
             "param_distributions": {},
-            "search_note": "模型内部已用交叉验证联合选择 alpha 与 l1_ratio。",
+            "search_note": "The estimator uses internal cross-validation to select alpha and l1_ratio jointly.",
         },
         "PLSRegression": {
             "estimator": PLSRegression(),
             "param_distributions": {"n_components": [2, 3, 5, 8, 10, 12, 15, 20, 25, 30]},
             "n_iter": 10,
-            "search_note": "50 个 measurement 可能共线，重点搜索潜变量数量。",
+            "search_note": "The measurement features may be collinear; the search focuses on the number of latent components.",
         },
         "SVR_RBF": {
             "estimator": SVR(kernel="rbf"),
@@ -223,7 +230,7 @@ def build_models():
                 "epsilon": [0.03, 0.05, 0.08, 0.10, 0.15, 0.20, 0.30],
                 "gamma": ["scale", "auto", 0.003, 0.01, 0.03, 0.1],
             },
-            "search_note": "标准化后的 50 维小样本回归，搜索 C、epsilon、gamma 控制平滑度与容错带。",
+            "search_note": "For standardized small-sample regression, search C, epsilon, and gamma to control smoothness and the tolerance band.",
         },
         "KNeighbors": {
             "estimator": KNeighborsRegressor(metric="minkowski"),
@@ -232,7 +239,7 @@ def build_models():
                 "weights": ["uniform", "distance"],
                 "p": [1, 2],
             },
-            "search_note": "标准化空间中搜索邻居数、距离加权和 L1/L2 距离。",
+            "search_note": "Search the number of neighbors, distance weighting, and L1/L2 distance in standardized feature space.",
         },
         "RandomForest": {
             "estimator": RandomForestRegressor(random_state=RANDOM_STATE, n_jobs=1),
@@ -243,7 +250,7 @@ def build_models():
                 "min_samples_leaf": [1, 2, 4, 6, 8],
                 "min_samples_split": [2, 5, 10],
             },
-            "search_note": "控制树深、叶节点样本量和特征子采样，降低过拟合。",
+            "search_note": "Control tree depth, leaf sample size, and feature subsampling to reduce overfitting.",
         },
         "ExtraTrees": {
             "estimator": ExtraTreesRegressor(random_state=RANDOM_STATE, n_jobs=1),
@@ -254,7 +261,7 @@ def build_models():
                 "min_samples_leaf": [1, 2, 4, 6],
                 "min_samples_split": [2, 5, 10],
             },
-            "search_note": "比随机森林更随机，搜索复杂度参数以平衡方差。",
+            "search_note": "Add further randomization than a random forest and tune complexity to balance variance.",
         },
     }
 
@@ -275,7 +282,7 @@ def build_models():
                 "reg_alpha": [0.0, 0.01, 0.05, 0.1],
                 "reg_lambda": [0.5, 1.0, 2.0, 5.0],
             },
-            "search_note": "梯度提升树搜索学习率、树深、采样比例与正则项，避免小样本过拟合。",
+            "search_note": "Tune learning rate, tree depth, sampling ratios, and regularization for gradient-boosted trees.",
         }
     if LGBMRegressor is not None:
         model_specs["LightGBM"] = {
@@ -292,7 +299,7 @@ def build_models():
                 "reg_lambda": [0.5, 1.0, 2.0, 5.0],
             },
             "n_iter": 12,
-            "search_note": "当前任务树模型较优，重点搜索叶子数、min_child_samples、采样与正则。",
+            "search_note": "For tree-based regression, focus on leaf count, min_child_samples, sampling, and regularization.",
         }
     if CatBoostRegressor is not None:
         model_specs["CatBoost"] = {
@@ -309,7 +316,7 @@ def build_models():
                 "learning_rate": [0.01, 0.02, 0.03, 0.05, 0.08],
                 "l2_leaf_reg": [1, 3, 5, 10, 20],
             },
-            "search_note": "对小样本表格回归搜索深度、学习率和 L2 叶正则。",
+            "search_note": "For small-sample tabular regression, search depth, learning rate, and L2 leaf regularization.",
         }
     return model_specs
 
@@ -472,7 +479,7 @@ def explain_model(model_name, model, X_train, X_test, y_test_scaled, feature_nam
         importance, method = builtin_importance(model, feature_names)
         if method == "fallback_zero_importance":
             importance, method = permutation_importance_for_model(model, X_eval, y_test_scaled.loc[X_eval.index], feature_names)
-        print(f"[Warning] {model_name} SHAP 计算失败，使用 {method}: {error}")
+        print(f"[Warning] SHAP computation failed for {model_name}; using {method}: {error}")
 
     importance_df = pd.DataFrame({
         "model": model_name,
@@ -555,10 +562,10 @@ def format_float(value, digits=4):
 
 
 def compact_params(row):
-    """报告中只展示关键超参，避免 Ridge/Lasso 的完整参数字典撑爆 Markdown 表格。"""
+    """Show only key hyperparameters to keep Markdown tables readable."""
     search_type = str(row.get("search_type", ""))
     if search_type != "RandomizedSearchCV":
-        return "内置CV / 默认参数"
+        return "Internal CV / default parameters"
 
     params_text = str(row.get("best_params", ""))
     params_text = params_text.replace("|", "/").replace("\n", " ")
@@ -581,10 +588,10 @@ def relative_output_path(path: Path) -> str:
 def write_markdown_report(metrics_df, best_model_name, dataset_info, model_times, search_summary_df):
     if "model_selection_score" in metrics_df.columns:
         test_metrics = metrics_df[metrics_df["split"] == "test"].sort_values("model_selection_score", ascending=True)
-        selection_label = dataset_info.get("best_model_selection_policy", "综合排名")
+        selection_label = dataset_info.get("best_model_selection_policy", "Overall ranking")
     else:
         test_metrics = metrics_df[metrics_df["split"] == "test"].sort_values("R2", ascending=False)
-        selection_label = "测试集 R2"
+        selection_label = "Test-set R2"
     train_metrics = metrics_df[metrics_df["split"] == "train"]
     metric_columns = ["model", "MAE", "RMSE", "R2", "Acc@0.5score", "Acc@1.0score", "beautiful_accuracy", "beautiful_f1"]
     best_row = test_metrics.iloc[0]
@@ -598,31 +605,31 @@ def write_markdown_report(metrics_df, best_model_name, dataset_info, model_times
     overfit_df["R2_gap_train_minus_test"] = overfit_df["train_R2"] - overfit_df["R2"]
 
     lines = []
-    lines.append("# 美观评分回归模型报告\n\n")
-    lines.append("> 主任务是预测连续美观评分 `beauty_score`；`is_beautiful` 只是将预测分数按阈值二值化后的辅助观察指标。\n\n")
+    lines.append("# Beauty Score Regression Model Report\n\n")
+    lines.append("> The primary task is to predict the continuous `beauty_score`. `is_beautiful` is an auxiliary binary view derived from a score threshold.\n\n")
 
-    lines.append("## 1. 结论摘要\n\n")
-    lines.append("| 项目 | 结果 |\n")
+    lines.append("## 1. Summary\n\n")
+    lines.append("| Item | Result |\n")
     lines.append("|---|---:|\n")
-    lines.append(f"| 最优模型（按{selection_label}） | **{best_model_name}** |\n")
-    lines.append(f"| 测试集 R2 | **{format_float(best_row['R2'])}** |\n")
-    lines.append(f"| 测试集 MAE | **{format_float(best_row['MAE'])}** |\n")
-    lines.append(f"| 测试集 RMSE | **{format_float(best_row['RMSE'])}** |\n")
-    lines.append(f"| 误差 ≤ 1 分比例 | **{format_float(best_row['Acc@1.0score'])}** |\n")
-    lines.append(f"| 样本数 | {dataset_info.get('total_samples_after_dropna', '-')} |\n")
-    lines.append(f"| 训练 / 测试 | {dataset_info.get('train_samples', '-')} / {dataset_info.get('test_samples', '-')} |\n")
-    lines.append(f"| 输入特征数 | {dataset_info.get('input_features', '-')} |\n")
+    lines.append(f"| Best model ({selection_label}) | **{best_model_name}** |\n")
+    lines.append(f"| Test-set R2 | **{format_float(best_row['R2'])}** |\n")
+    lines.append(f"| Test-set MAE | **{format_float(best_row['MAE'])}** |\n")
+    lines.append(f"| Test-set RMSE | **{format_float(best_row['RMSE'])}** |\n")
+    lines.append(f"| Predictions within 1 score point | **{format_float(best_row['Acc@1.0score'])}** |\n")
+    lines.append(f"| Sample count | {dataset_info.get('total_samples_after_dropna', '-')} |\n")
+    lines.append(f"| Train / test samples | {dataset_info.get('train_samples', '-')} / {dataset_info.get('test_samples', '-')} |\n")
+    lines.append(f"| Number of input features | {dataset_info.get('input_features', '-')} |\n")
 
-    lines.append("\n## 2. 任务与数据\n\n")
-    lines.append(f"- 数据来源：`{dataset_info.get('source_dataset', DATASET_CSV)}`\n")
-    lines.append("- 输入：50 个 `measurement__*` 标量特征。\n")
-    lines.append("- 输出：连续美观评分 `beauty_score`。\n")
-    lines.append(f"- 辅助分类：预测分数 `>= {BEAUTIFUL_THRESHOLD:g}` 记为美观，仅用于辅助评估，不参与分类训练。\n")
-    lines.append(f"- 划分方式：按患者基本信息 Excel 的批次固定划分，`{EXCEL_BATCH_COLUMN}` in `{', '.join(TEST_BATCHES)}` 作为测试集，其余样本作为训练集。\n")
-    lines.append("- 预处理：输入特征和目标评分均使用训练集拟合的 `StandardScaler` 标准化；评估前把预测值还原到原始评分尺度。\n")
+    lines.append("\n## 2. Task and Data\n\n")
+    lines.append(f"- Source dataset: `{dataset_info.get('source_dataset', DATASET_CSV)}`\n")
+    lines.append("- Inputs: 50 scalar `measurement__*` features.\n")
+    lines.append("- Target: continuous `beauty_score`.\n")
+    lines.append(f"- Auxiliary classification: scores `>= {BEAUTIFUL_THRESHOLD:g}` are labeled as beautiful for evaluation only; no classifier is trained.\n")
+    lines.append(f"- Split: fixed holdout by batch from the subject-information workbook; `{EXCEL_BATCH_COLUMN}` in `{', '.join(TEST_BATCHES)}` is the test set.\n")
+    lines.append("- Preprocessing: fit `StandardScaler` on training features and target scores; inverse-transform predictions before evaluation.\n")
 
-    lines.append(f"\n## 3. 测试集模型排名（按{selection_label}）\n\n")
-    lines.append("| 排名 | 模型 | MAE↓ | RMSE↓ | R2↑ | ≤0.5分 | ≤1分 | 辅助美观Acc | 辅助F1 |\n")
+    lines.append(f"\n## 3. Test-Set Model Ranking ({selection_label})\n\n")
+    lines.append("| Rank | Model | MAE↓ | RMSE↓ | R2↑ | Within 0.5 | Within 1.0 | Auxiliary accuracy | Auxiliary F1 |\n")
     lines.append("|---:|---|---:|---:|---:|---:|---:|---:|---:|\n")
     for rank, (_, row) in enumerate(test_metrics[metric_columns].iterrows(), start=1):
         lines.append(
@@ -631,36 +638,36 @@ def write_markdown_report(metrics_df, best_model_name, dataset_info, model_times
             f"{format_float(row['beautiful_accuracy'])} | {format_float(row['beautiful_f1'])} |\n"
         )
 
-    lines.append("\n> 说明：辅助美观分类 F1 为 0 通常表示测试集中高分美观样本较少，且模型预测值没有跨过 7 分阈值；这不影响主任务回归指标的判断。\n")
+    lines.append("\n> Note: An auxiliary classification F1 of zero can occur when the test set has few high-scoring subjects and predictions do not cross the score threshold. This does not change the primary regression metrics.\n")
 
-    lines.append("\n## 4. 泛化情况（训练 R2 vs 测试 R2）\n\n")
-    lines.append("| 模型 | Train R2 | Test R2 | R2差值 |\n")
+    lines.append("\n## 4. Generalization (Train R2 vs. Test R2)\n\n")
+    lines.append("| Model | Train R2 | Test R2 | R2 gap |\n")
     lines.append("|---|---:|---:|---:|\n")
     for _, row in overfit_df.iterrows():
         lines.append(f"| {row['model']} | {format_float(row['train_R2'])} | {format_float(row['R2'])} | {format_float(row['R2_gap_train_minus_test'])} |\n")
 
-    lines.append("\n## 5. 超参优化结果（简表）\n\n")
-    lines.append("| 模型 | 搜索方式 | 候选数 | CV RMSE↓（标准化空间） | 最优/关键参数 |\n")
+    lines.append("\n## 5. Hyperparameter Search Summary\n\n")
+    lines.append("| Model | Search method | Candidates | CV RMSE↓ (standardized space) | Best/key parameters |\n")
     lines.append("|---|---|---:|---:|---|\n")
     for _, row in search_summary_df.iterrows():
         cv_rmse = format_float(row["best_cv_rmse_scaled"]) if "best_cv_rmse_scaled" in row else "-"
         lines.append(
             f"| {row['model']} | {row['search_type']} | {int(row['n_candidates'])} | {cv_rmse} | `{compact_params(row)}` |\n"
         )
-    lines.append("\n完整超参搜索结果见 `metrics/hyperparameter_search_summary.csv` 和 `metrics/<model>_hyperparameter_search_cv_results.csv`。\n")
+    lines.append("\nFull search results are available in `metrics/hyperparameter_search_summary.csv` and `metrics/<model>_hyperparameter_search_cv_results.csv`.\n")
 
-    lines.append("\n## 6. 综合特征重要性 Top 15\n\n")
+    lines.append("\n## 6. Overall Feature Importance: Top 15\n\n")
     if feature_df.empty:
-        lines.append("暂未生成综合特征重要性文件。\n")
+        lines.append("No overall feature-importance file has been generated.\n")
     else:
-        lines.append("| 排名 | 特征 | 平均重要性 | 最大重要性 |\n")
+        lines.append("| Rank | Feature | Mean importance | Maximum importance |\n")
         lines.append("|---:|---|---:|---:|\n")
         for _, row in feature_df.iterrows():
             lines.append(
                 f"| {int(row['rank'])} | `{row['feature']}` | {format_float(row['mean_importance'], 6)} | {format_float(row['max_importance'], 6)} |\n"
             )
 
-    lines.append("\n## 7. 关键图表\n\n")
+    lines.append("\n## 7. Key Figures\n\n")
     plot_files = [
         PLOT_DIR / "test_r2_by_model.png",
         PLOT_DIR / "test_mae_by_model.png",
@@ -674,21 +681,21 @@ def write_markdown_report(metrics_df, best_model_name, dataset_info, model_times
             lines.append(f"### {title}\n\n![{title}]({rel_path})\n\n")
 
     if model_times:
-        lines.append("\n## 8. 训练耗时\n\n")
-        lines.append("| 模型 | 秒 |\n")
+        lines.append("\n## 8. Training Time\n\n")
+        lines.append("| Model | Seconds |\n")
         lines.append("|---|---:|\n")
         for model_name, seconds in model_times.items():
             lines.append(f"| {model_name} | {seconds:.2f} |\n")
 
-    lines.append("\n## 9. 输出文件索引\n\n")
-    lines.append("| 类型 | 文件 |\n")
+    lines.append("\n## 9. Output Files\n\n")
+    lines.append("| Type | File |\n")
     lines.append("|---|---|\n")
-    lines.append("| 指标汇总 | `metrics/metrics_summary.csv` |\n")
-    lines.append("| 超参汇总 | `metrics/hyperparameter_search_summary.csv` |\n")
-    lines.append("| 预测结果 | `predictions/*_test_predictions.csv` |\n")
-    lines.append("| 特征重要性 | `feature_importance/*_feature_importance.csv` |\n")
-    lines.append("| 综合特征重要性 | `feature_importance/overall_mean_feature_importance.csv` |\n")
-    lines.append("| 图表 | `plots/*.png` |\n")
+    lines.append("| Metrics summary | `metrics/metrics_summary.csv` |\n")
+    lines.append("| Hyperparameter summary | `metrics/hyperparameter_search_summary.csv` |\n")
+    lines.append("| Predictions | `predictions/*_test_predictions.csv` |\n")
+    lines.append("| Feature importance | `feature_importance/*_feature_importance.csv` |\n")
+    lines.append("| Overall feature importance | `feature_importance/overall_mean_feature_importance.csv` |\n")
+    lines.append("| Figures | `plots/*.png` |\n")
     (OUTPUT_DIR / "report.md").write_text("".join(lines), encoding="utf-8")
 
 
@@ -698,7 +705,7 @@ def regenerate_report_from_outputs():
     train_path = OUTPUT_DIR / TRAIN_DATASET_FILENAME
     test_path = OUTPUT_DIR / TEST_DATASET_FILENAME
     if not metrics_path.exists() or not search_path.exists():
-        raise FileNotFoundError("缺少已训练输出，请先完整运行训练脚本。")
+        raise FileNotFoundError("Trained outputs are missing. Run the complete training script first.")
 
     metrics_df = pd.read_csv(metrics_path, encoding="utf-8-sig")
     search_summary_df = pd.read_csv(search_path, encoding="utf-8-sig")
@@ -718,7 +725,7 @@ def regenerate_report_from_outputs():
         "best_model_test_RMSE": f"{best_row['RMSE']:.4f}",
     }
     write_markdown_report(metrics_df, best_row["model"], dataset_info, {}, search_summary_df)
-    print(f"[Report] 已重新生成: {OUTPUT_DIR / 'report.md'}")
+    print(f"[Report] Regenerated: {OUTPUT_DIR / 'report.md'}")
 
 
 def main():

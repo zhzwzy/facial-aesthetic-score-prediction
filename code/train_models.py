@@ -60,8 +60,8 @@ trainer.load_dataset_random_only = load_experiment_split
 
 def correct_report_text(group_root: Path) -> None:
     replacements = {
-        "女性与男性数据完全分开训练、调参、评估和解释；两者都只使用对应的原始 CSV，不混合样本，也不使用 supplementary 数据。": (
-            "女性与男性数据分别训练和评估；额外男性记录在男性数据集划分前合并。"
+        "Female and male cohorts are trained, tuned, evaluated, and interpreted separately; only their corresponding source CSV files are used.": (
+            "Female and male cohorts are handled separately; the additional male records are merged before the male cohort is split."
         ),
         "no supplementary data": "additional male annotations merged before random splitting",
     }

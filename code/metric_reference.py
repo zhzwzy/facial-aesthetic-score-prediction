@@ -10,20 +10,22 @@ import pandas as pd
 from PIL import Image
 
 # ========================
-# 路径配置
+# Path configuration
 # ========================
 TASK_DIR = r"inputs/metric_reference"
 
 # ========================
-# 自然头位前后/上下符号约定
-# 经 470 例 pre 标注点实测：旋转到自然头位后，解剖前部点 x 恒大于后部点 x（470/470 一致），
-# 因此“前方 = +x 方向”；图像坐标系 y 向下增大，故“下方 = +y”。
+# Sign convention in natural-head-position coordinates
+# The anterior direction is +x; image y coordinates increase downward, so +y is inferior.
 # ========================
-ANTERIOR_X = 1.0  # 前方对应 +x 方向
+ANTERIOR_X = 1.0  # Anterior is the positive x direction.
+NATURAL_LABEL = "\u81ea\u7136"
+LEGACY_NAME_HEADER = "\u59d3\u540d"
+LEGACY_BATCH_HEADER = "\u6279\u6b21"
 PRE_MEASUREMENTS_FILE = os.path.join(TASK_DIR, "pre_measurements.txt")
 DELTA_MEASUREMENTS_FILE = os.path.join(TASK_DIR, "post-pre_measurements.txt")
 POST_MEASUREMENTS_FILE = os.path.join(TASK_DIR, "post_measurements.txt")
-PATIENT_INFO_EXCEL = os.path.join(TASK_DIR, "指标预测指标-患者基本信息.xlsx")
+PATIENT_INFO_EXCEL = os.path.join(TASK_DIR, "patient_info.xlsx")
 
 PRE_POINTS_CSV = os.path.join(TASK_DIR, "pre.csv")
 POST_POINTS_CSV = os.path.join(TASK_DIR, "post.csv")
@@ -32,14 +34,14 @@ OUTPUT_DIR = os.path.join("outputs", "metric_reference")
 IMAGE_DIR = os.path.join("inputs", "images")
 
 # ========================
-# 可视化配置
+# Visualization configuration
+# When enabled, save rotated landmarks used in calculations for visual review.
 # ========================
-# 构建数据集时，把计算所用的旋转后标志点可视化保存，便于核对数据
 ENABLE_VISUALIZATION = False
 VIS_OUTPUT_DIR = os.path.join(OUTPUT_DIR, "vis_landmark")
 VIS_POINT_RADIUS = 8
-VIS_POINT_COLOR = (0, 0, 255)   # BGR: 亮红色
-VIS_TEXT_COLOR = (0, 255, 255)  # BGR: 亮黄色
+VIS_POINT_COLOR = (0, 0, 255)   # BGR: bright red
+VIS_TEXT_COLOR = (0, 255, 255)  # BGR: bright yellow
 VIS_FONT_SCALE = 0.7
 
 _image_center_cache = {}
@@ -51,27 +53,27 @@ IMAGE_EXT = ".bmp"
 # Metric order and geometric definitions used by the upstream measurement implementation.
 ALL_METRIC_NAMES = [
     "SN-FH(°)", "BaN-FH(°)", "S-N(mm)", "S-Ba(mm)",
-    "SNA(°)", "PP-FH(°)", "ANS-N(自然)(mm)", "A-N(自然)(mm)", "A-NP(mm)", "PNS-A(mm)", "Co-A(mm)",
+    "SNA(°)", "PP-FH(°)", f"ANS-N({NATURAL_LABEL})(mm)", f"A-N({NATURAL_LABEL})(mm)", "A-NP(mm)", "PNS-A(mm)", "Co-A(mm)",
     "Rlc-Go-Me(°)", "Rlc-Go-N(°)", "N-Go-Me(°)", "N-S-Rlc(°)", "S-Rlc-Go(°)", "SNB(°)",
-    "Pog-N(自然)(mm)", "Pog-NB(mm)", "Pog-B(自然)(mm)", "B-N(自然)(mm)", "B-NP(mm)", "Pog-NP(mm)",
+    f"Pog-N({NATURAL_LABEL})(mm)", "Pog-NB(mm)", f"Pog-B({NATURAL_LABEL})(mm)", f"B-N({NATURAL_LABEL})(mm)", "B-NP(mm)", "Pog-NP(mm)",
     "MP-FH(°)", "MP-SN(°)", "N-S-Gn(°)", "SGn-BaN(°)", "SGn-FH(°)", "FH-NPog(°)", "Go-Pog(mm)", "Co-Go(mm)", "Co-Gn(mm)",
     "ANB(°)", "PP-GoGn(°)",
     "S-Go/N-Me(%)", "ANS-Me/N-Me(%)", "N-ANS(mm)",
     "U1-A(mm)", "U1-NA(mm)", "U1-PP(mm)", "U1-APog(mm)",
-    "U1p-N(自然)(mm)", "U1p-Pog(自然)(mm)", "U1ta-N(自然)(mm)", "U1ta-Pog(自然)(mm)",
-    "U1c-N(自然)(mm)", "U1c-Pog(自然)(mm)", "L1-Pog(mm)", "L1-NB(mm)", "L1-MP(mm)", "L1-APog(mm)",
-    "L1p-N(自然)(mm)", "L1p-Pog(自然)(mm)", "L1c-N(自然)(mm)", "L1c-Pog(自然)(mm)", "Holdaway ratio",
+    f"U1p-N({NATURAL_LABEL})(mm)", f"U1p-Pog({NATURAL_LABEL})(mm)", f"U1ta-N({NATURAL_LABEL})(mm)", f"U1ta-Pog({NATURAL_LABEL})(mm)",
+    f"U1c-N({NATURAL_LABEL})(mm)", f"U1c-Pog({NATURAL_LABEL})(mm)", "L1-Pog(mm)", "L1-NB(mm)", "L1-MP(mm)", "L1-APog(mm)",
+    f"L1p-N({NATURAL_LABEL})(mm)", f"L1p-Pog({NATURAL_LABEL})(mm)", f"L1c-N({NATURAL_LABEL})(mm)", f"L1c-Pog({NATURAL_LABEL})(mm)", "Holdaway ratio",
     "U1-SN(°)", "U1-NA(°)", "L1-NB(°)", "L1-MP(°)", "L1Pog-OP(°)", "U1-L1(°)",
     "U6-PP(mm)", "L6-MP(mm)",
     "overbite(mm)", "overjet(mm)", "OPa-SN(°)", "OPa-FH(°)", "OPf-SN(°)", "OPf-FH(°)", "L1-OP(mm)",
-    "sSn-glabella(自然)(mm)", "UL-Sn(自然)(mm)", "LL-Sn(自然)(mm)", "Ms-Sn(自然)(mm)", "sPog-Sn(自然)(mm)",
+    f"sSn-glabella({NATURAL_LABEL})(mm)", f"UL-Sn({NATURAL_LABEL})(mm)", f"LL-Sn({NATURAL_LABEL})(mm)", f"Ms-Sn({NATURAL_LABEL})(mm)", f"sPog-Sn({NATURAL_LABEL})(mm)",
     "Sn-Stoms(mm)", "LL-sPogUL(mm)", "Gl-Sn-sPog(°)",
-    "ANS-Stoms(mm)", "Sn-A(自然)(mm)", "Sn-N h(自然)(mm)", "Sn-N v(自然)(mm)", "Sn-ANS h(自然)(mm)", "Sn-ANS v(自然)(mm)",
-    "U1p-Sn(自然)(mm)", "U1p-sPog(自然)(mm)", "U1p-UL(mm)",
-    "U1ta-Sn(自然)(mm)", "U1ta-sPog(自然)(mm)", "U1ta-UL(mm)",
-    "U1c-Sn(自然)(mm)", "U1c-sPog(自然)(mm)", "U1c-UL(mm)",
-    "L1p-Sn(自然)(mm)", "L1p-sPog(自然)(mm)", "L1p-UL(mm)",
-    "L1c-Sn(自然)(mm)", "L1c-sPog(自然)(mm)", "L1c-UL(mm)",
+    "ANS-Stoms(mm)", f"Sn-A({NATURAL_LABEL})(mm)", f"Sn-N h({NATURAL_LABEL})(mm)", f"Sn-N v({NATURAL_LABEL})(mm)", f"Sn-ANS h({NATURAL_LABEL})(mm)", f"Sn-ANS v({NATURAL_LABEL})(mm)",
+    f"U1p-Sn({NATURAL_LABEL})(mm)", f"U1p-sPog({NATURAL_LABEL})(mm)", "U1p-UL(mm)",
+    f"U1ta-Sn({NATURAL_LABEL})(mm)", f"U1ta-sPog({NATURAL_LABEL})(mm)", "U1ta-UL(mm)",
+    f"U1c-Sn({NATURAL_LABEL})(mm)", f"U1c-sPog({NATURAL_LABEL})(mm)", "U1c-UL(mm)",
+    f"L1p-Sn({NATURAL_LABEL})(mm)", f"L1p-sPog({NATURAL_LABEL})(mm)", "L1p-UL(mm)",
+    f"L1c-Sn({NATURAL_LABEL})(mm)", f"L1c-sPog({NATURAL_LABEL})(mm)", "L1c-UL(mm)",
     "Stomi-U1p(mm)", "Stoms-U1p(mm)", "Stomi-L1p(mm)", "Stoms-L1p(mm)",
 ]
 
@@ -97,24 +99,24 @@ def normalize_batch(value) -> str:
 
 def normalize_metric_name(name: str) -> str:
     text = normalize_text(name)
-    text = text.replace("（", "(").replace("）", ")")
-    text = text.replace("°", "deg").replace("％", "%")
+    text = text.replace("\uff08", "(").replace("\uff09", ")")
+    text = text.replace("°", "deg").replace("\uff05", "%")
     text = re.sub(r"\s+", "", text)
-    text = text.replace("(自然)", "")
+    text = text.replace(f"({NATURAL_LABEL})", "")
     return text.lower()
 
 
 CANONICAL_TO_METRIC = {normalize_metric_name(name): name for name in ALL_METRIC_NAMES}
 
-# 针对 txt 中省略单位、空格、全角括号等写法做别名兼容
+# Support aliases that omit units, spaces, or use full-width parentheses in text files.
 METRIC_ALIASES = {
     "sn-fh": "SN-FH(°)",
     "sna": "SNA(°)",
-    "a-n": "A-N(自然)(mm)",
+    "a-n": f"A-N({NATURAL_LABEL})(mm)",
     "snb": "SNB(°)",
-    "pog-n": "Pog-N(自然)(mm)",
+    "pog-n": f"Pog-N({NATURAL_LABEL})(mm)",
     "pog-nb": "Pog-NB(mm)",
-    "b-n": "B-N(自然)(mm)",
+    "b-n": f"B-N({NATURAL_LABEL})(mm)",
     "mp-fh": "MP-FH(°)",
     "mp-sn": "MP-SN(°)",
     "n-s-gn": "N-S-Gn(°)",
@@ -135,33 +137,33 @@ METRIC_ALIASES = {
     "overbite": "overbite(mm)",
     "overjet": "overjet(mm)",
     "opa-sn": "OPa-SN(°)",
-    "ssn-glabella": "sSn-glabella(自然)(mm)",
-    "ul-sn": "UL-Sn(自然)(mm)",
-    "ll-sn": "LL-Sn(自然)(mm)",
-    "ms-sn": "Ms-Sn(自然)(mm)",
-    "spog-sn": "sPog-Sn(自然)(mm)",
+    "ssn-glabella": f"sSn-glabella({NATURAL_LABEL})(mm)",
+    "ul-sn": f"UL-Sn({NATURAL_LABEL})(mm)",
+    "ll-sn": f"LL-Sn({NATURAL_LABEL})(mm)",
+    "ms-sn": f"Ms-Sn({NATURAL_LABEL})(mm)",
+    "spog-sn": f"sPog-Sn({NATURAL_LABEL})(mm)",
     "ll-spogul": "LL-sPogUL(mm)",
     "gl-sn-spog": "Gl-Sn-sPog(°)",
-    "sn-a": "Sn-A(自然)(mm)",
-    "sn-ansh": "Sn-ANS h(自然)(mm)",
-    "sn-ansv": "Sn-ANS v(自然)(mm)",
-    "u1p-sn": "U1p-Sn(自然)(mm)",
-    "u1p-spog": "U1p-sPog(自然)(mm)",
-    "u1ta-sn": "U1ta-Sn(自然)(mm)",
-    "u1ta-spog": "U1ta-sPog(自然)(mm)",
-    "u1c-sn": "U1c-Sn(自然)(mm)",
-    "u1c-spog": "U1c-sPog(自然)(mm)",
+    "sn-a": f"Sn-A({NATURAL_LABEL})(mm)",
+    "sn-ansh": f"Sn-ANS h({NATURAL_LABEL})(mm)",
+    "sn-ansv": f"Sn-ANS v({NATURAL_LABEL})(mm)",
+    "u1p-sn": f"U1p-Sn({NATURAL_LABEL})(mm)",
+    "u1p-spog": f"U1p-sPog({NATURAL_LABEL})(mm)",
+    "u1ta-sn": f"U1ta-Sn({NATURAL_LABEL})(mm)",
+    "u1ta-spog": f"U1ta-sPog({NATURAL_LABEL})(mm)",
+    "u1c-sn": f"U1c-Sn({NATURAL_LABEL})(mm)",
+    "u1c-spog": f"U1c-sPog({NATURAL_LABEL})(mm)",
     "u1c-ul": "U1c-UL(mm)",
-    "l1p-spog": "L1p-sPog(自然)(mm)",
-    "l1c-spog": "L1c-sPog(自然)(mm)",
+    "l1p-spog": f"L1p-sPog({NATURAL_LABEL})(mm)",
+    "l1c-spog": f"L1c-sPog({NATURAL_LABEL})(mm)",
     "l1c-ul": "L1c-UL(mm)",
     "stomi-u1p": "Stomi-U1p(mm)",
     "stoms-u1p": "Stoms-U1p(mm)",
     "stomi-l1p": "Stomi-L1p(mm)",
     "u1-pp": "U1-PP(mm)",
-    "u1p-n": "U1p-N(自然)(mm)",
-    "u1ta-n": "U1ta-N(自然)(mm)",
-    "u1c-n": "U1c-N(自然)(mm)",
+    "u1p-n": f"U1p-N({NATURAL_LABEL})(mm)",
+    "u1ta-n": f"U1ta-N({NATURAL_LABEL})(mm)",
+    "u1c-n": f"U1c-N({NATURAL_LABEL})(mm)",
 }
 
 
@@ -171,7 +173,7 @@ def resolve_metric_name(raw_name: str) -> str:
         return CANONICAL_TO_METRIC[key]
     if key in METRIC_ALIASES:
         return METRIC_ALIASES[key]
-    raise KeyError(f"指标清单中的指标无法匹配计算公式: {raw_name}")
+    raise KeyError(f"No measurement formula matches the requested metric: {raw_name}")
 
 
 def read_measurement_list(path: str) -> List[str]:
@@ -181,7 +183,8 @@ def read_measurement_list(path: str) -> List[str]:
 
 
 # ========================
-# 几何函数：参考 landmark_xsx_combinecsv.py，并加入空值保护
+# Geometry helpers adapted from the upstream landmark measurement implementation,
+# with additional handling for missing values.
 # ========================
 def is_valid_point(point) -> bool:
     if point is None or len(point) != 2:
@@ -341,10 +344,10 @@ def calculate_perpendicular_foot_distance(A, B, C, D):
 
 
 # ========================
-# 自然头位“前后/上下”带符号几何（前方=+x，下方=+y）
+# Signed geometry in natural-head-position coordinates (anterior=+x, inferior=+y).
 # ========================
 def _perpendicular_foot(point, line_b, line_c):
-    """点 point 在直线 line_b-line_c 上的垂足坐标。"""
+    """Return the projection of point onto the line through line_b and line_c."""
     bx, by = line_b
     cx, cy = line_c
     px, py = point
@@ -358,7 +361,7 @@ def _perpendicular_foot(point, line_b, line_c):
 
 
 def signed_perp_distance_anterior(point, line_b, line_c):
-    """点到直线的垂直距离，按自然头位前后定号：点在直线前方(+x侧)为正，后方为负。"""
+    """Return signed perpendicular distance; anterior (+x) is positive and posterior is negative."""
     if not all(is_valid_point(p) for p in [point, line_b, line_c]):
         return np.nan
     foot = _perpendicular_foot(point, line_b, line_c)
@@ -370,7 +373,7 @@ def signed_perp_distance_anterior(point, line_b, line_c):
 
 
 def signed_angle_anb(a_pt, n_pt, b_pt):
-    """ANB 角的带符号值：A 在 B 前方(+x侧)为正(III类负)，后方为负。"""
+    """Return signed ANB angle; point A anterior to B (+x) is positive."""
     magnitude = calculate_angle_at_center(a_pt, n_pt, b_pt)
     if pd.isna(magnitude) or not (is_valid_point(a_pt) and is_valid_point(b_pt)):
         return magnitude
@@ -381,7 +384,7 @@ def signed_angle_anb(a_pt, n_pt, b_pt):
 
 
 def anb_from_sna_snb(s_pt, n_pt, a_pt, b_pt):
-    """ANB = SNA - SNB。A 偏前(II类)为正，A 偏后(III类)为负。"""
+    """Calculate ANB as SNA minus SNB; a more anterior A point yields a positive value."""
     sna = calculate_angle_at_center(s_pt, n_pt, a_pt)
     snb = calculate_angle_at_center(s_pt, n_pt, b_pt)
     if pd.isna(sna) or pd.isna(snb):
@@ -390,24 +393,29 @@ def anb_from_sna_snb(s_pt, n_pt, a_pt, b_pt):
 
 
 def signed_angle_sn_fh(s_pt, n_pt, po_pt, or_pt):
-    """SN-FH：SN 平面与 FH 平面的前交角。
-    SN 平面相对 FH 向上倾斜（两平面在后方相交）为正；向下倾斜（前方相交）为负。"""
+    """Return the anterior intersection angle between the SN and FH planes.
+
+    Upward SN inclination relative to FH (posterior intersection) is positive;
+    downward inclination (anterior intersection) is negative.
+    """
     magnitude = calculate_angle_between_vectors(s_pt, n_pt, po_pt, or_pt)
     if pd.isna(magnitude) or not all(is_valid_point(p) for p in [s_pt, n_pt, po_pt, or_pt]):
         return magnitude
-    # 两条由后向前(+x)的方向向量：SN 用 S->N，FH 用 Po->Or
+    # Both vectors point posterior-to-anterior (+x): S->N for SN and Po->Or for FH.
     v_sn = (n_pt[0] - s_pt[0], n_pt[1] - s_pt[1])
     v_fh = (or_pt[0] - po_pt[0], or_pt[1] - po_pt[1])
     cross = v_fh[0] * v_sn[1] - v_fh[1] * v_sn[0]  # v_fh × v_sn
     if cross == 0:
         return magnitude
-    # 图像坐标 y 向下：SN 相对 FH 向上倾斜时 cross<0，定为正值
+    # Image y increases downward; upward SN inclination relative to FH gives cross < 0.
     return magnitude if cross * ANTERIOR_X < 0 else -magnitude
 
 
 def signed_horizontal_distance(point, ref_point, positive_when_front=True):
-    """点到“过 ref_point 的竖直参考线”的水平距离。
-    positive_when_front=True：point 在 ref 前方(+x侧)为正；False：point 在 ref 后方为正。"""
+    """Return horizontal distance to a vertical line through ref_point.
+
+    If positive_when_front is true, anterior (+x) is positive; otherwise posterior is positive.
+    """
     if not is_valid_point(point) or not is_valid_point(ref_point):
         return np.nan
     front_signed = (point[0] - ref_point[0]) * ANTERIOR_X
@@ -415,14 +423,14 @@ def signed_horizontal_distance(point, ref_point, positive_when_front=True):
 
 
 def signed_overbite(u1p, l1p, occ_a, occ_b):
-    """覆牙合(overbite)：沿合平面(occ_a-occ_b)的法线方向，U1-p 相对 L1-p 偏下方(+y)为正。"""
+    """Calculate overbite along the occlusal-plane normal; inferior U1-p relative to L1-p is positive."""
     if not all(is_valid_point(p) for p in [u1p, l1p, occ_a, occ_b]):
         return np.nan
     ux = occ_b[0] - occ_a[0]
     uy = occ_b[1] - occ_a[1]
     if ux == 0 and uy == 0:
         return np.nan
-    # 合平面法线，取指向下方(+y)的方向
+    # Use the occlusal-plane normal that points inferiorly (+y).
     perp_x, perp_y = -uy, ux
     if perp_y < 0:
         perp_x, perp_y = uy, -ux
@@ -431,7 +439,7 @@ def signed_overbite(u1p, l1p, occ_a, occ_b):
 
 
 def signed_overjet(u1p, l1p, occ_a, occ_b):
-    """覆盖(overjet)：沿合平面(occ_a-occ_b)方向，U1-p 相对 L1-p 偏前方(+x侧)为正。"""
+    """Calculate overjet along the occlusal plane; anterior U1-p relative to L1-p is positive."""
     if not all(is_valid_point(p) for p in [u1p, l1p, occ_a, occ_b]):
         return np.nan
     ux = occ_b[0] - occ_a[0]
@@ -439,7 +447,7 @@ def signed_overjet(u1p, l1p, occ_a, occ_b):
     norm = math.hypot(ux, uy)
     if norm == 0:
         return np.nan
-    # 合平面方向，取 x 分量指向前方(+x)的方向
+    # Choose the occlusal-plane direction whose x component points anteriorly (+x).
     if ux * ANTERIOR_X < 0:
         ux, uy = -ux, -uy
     return ((u1p[0] - l1p[0]) * ux + (u1p[1] - l1p[1]) * uy) / norm
@@ -447,9 +455,10 @@ def signed_overjet(u1p, l1p, occ_a, occ_b):
 
 def rotate_points(points: Dict[str, Tuple[float, float]], angle_deg: float):
     """
-    严格使用 rotation.csv 的角度旋转点。
-    原参考脚本围绕图像中心旋转；本任务只有坐标 CSV，无图像尺寸。
-    对本脚本计算的角度、距离、自然头位 x/y 差值而言，旋转中心差异只产生统一平移，差值不受影响。
+    Apply the angle from rotation.csv to the landmarks.
+    This utility receives coordinate CSV files without image dimensions, so it rotates
+    around the origin. For angles, distances, and natural-head-position coordinate
+    differences, changing the rotation center adds only a common translation.
     """
     if angle_deg == 0:
         return points
@@ -468,8 +477,9 @@ def rotate_points(points: Dict[str, Tuple[float, float]], angle_deg: float):
 
 def rotate_points_around_center(points: Dict[str, Tuple[float, float]], angle_deg: float, center: Tuple[float, float]):
     """
-    围绕图像中心顺时针旋转标志点 angle_deg 度。
-    rotation.csv 中的角度约定为顺时针；该公式与 cv2.getRotationMatrix2D(center, -angle, 1.0) 一致。
+    Rotate landmarks clockwise by angle_deg around the image center.
+    Angles in rotation.csv are clockwise; this matches
+    cv2.getRotationMatrix2D(center, -angle, 1.0).
     """
     if angle_deg == 0:
         return dict(points)
@@ -547,8 +557,8 @@ def metric_value_dict(points_dict: Dict[str, Tuple[float, float]]) -> Dict[str, 
         "S-Ba(mm)": safe_div(calculate_distance(s_point, ba_point), scale),
         "SNA(°)": calculate_angle_at_center(s_point, n_point, a_point),
         "PP-FH(°)": calculate_angle_between_vectors(po_point, or_point, pns, ans),
-        "ANS-N(自然)(mm)": safe_div(calculate_natural_pos_level_distance(ans, n_point), scale),
-        "A-N(自然)(mm)": safe_div(signed_horizontal_distance(a_point, n_point, positive_when_front=True), scale),
+        f"ANS-N({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(ans, n_point), scale),
+        f"A-N({NATURAL_LABEL})(mm)": safe_div(signed_horizontal_distance(a_point, n_point, positive_when_front=True), scale),
         "A-NP(mm)": safe_div(calculate_signed_vertical_distance(n_point, po_point, or_point, a_point), scale),
         "PNS-A(mm)": safe_div(calculate_foot_distance(a_point, pns, ans, pns), scale),
         "Co-A(mm)": safe_div(calculate_distance(co, a_point), scale),
@@ -558,10 +568,10 @@ def metric_value_dict(points_dict: Dict[str, Tuple[float, float]]) -> Dict[str, 
         "N-S-Rlc(°)": calculate_angle_at_center(n_point, s_point, rlc),
         "S-Rlc-Go(°)": calculate_angle_at_center(s_point, rlc, go),
         "SNB(°)": calculate_angle_at_center(s_point, n_point, b_point),
-        "Pog-N(自然)(mm)": safe_div(calculate_natural_pos_level_distance(n_point, pog), scale),
+        f"Pog-N({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(n_point, pog), scale),
         "Pog-NB(mm)": safe_div(signed_perp_distance_anterior(pog, n_point, b_point), scale),
-        "Pog-B(自然)(mm)": safe_div(calculate_natural_pos_level_distance(b_point, pog), scale),
-        "B-N(自然)(mm)": safe_div(calculate_natural_pos_level_distance(n_point, b_point), scale),
+        f"Pog-B({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(b_point, pog), scale),
+        f"B-N({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(n_point, b_point), scale),
         "B-NP(mm)": safe_div(calculate_signed_vertical_distance(n_point, po_point, or_point, b_point), scale),
         "Pog-NP(mm)": safe_div(calculate_signed_vertical_distance(n_point, po_point, or_point, pog), scale),
         "MP-FH(°)": calculate_angle_between_vectors(po_point, or_point, go, gn),
@@ -582,20 +592,20 @@ def metric_value_dict(points_dict: Dict[str, Tuple[float, float]]) -> Dict[str, 
         "U1-NA(mm)": safe_div(signed_perp_distance_anterior(u1p, n_point, a_point), scale),
         "U1-PP(mm)": safe_div(calculate_perpendicular_distance_to_line(u1p, ans, pns), scale),
         "U1-APog(mm)": safe_div(signed_perp_distance_anterior(u1p, a_point, pog), scale),
-        "U1p-N(自然)(mm)": safe_div(calculate_natural_pos_level_distance(n_point, u1p), scale),
-        "U1p-Pog(自然)(mm)": safe_div(calculate_natural_pos_level_distance(pog, u1p), scale),
-        "U1ta-N(自然)(mm)": safe_div(calculate_natural_pos_level_distance(n_point, u1ta), scale),
-        "U1ta-Pog(自然)(mm)": safe_div(calculate_natural_pos_level_distance(pog, u1ta), scale),
-        "U1c-N(自然)(mm)": safe_div(calculate_natural_pos_level_distance(n_point, u1c), scale),
-        "U1c-Pog(自然)(mm)": safe_div(calculate_natural_pos_level_distance(pog, u1c), scale),
+        f"U1p-N({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(n_point, u1p), scale),
+        f"U1p-Pog({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(pog, u1p), scale),
+        f"U1ta-N({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(n_point, u1ta), scale),
+        f"U1ta-Pog({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(pog, u1ta), scale),
+        f"U1c-N({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(n_point, u1c), scale),
+        f"U1c-Pog({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(pog, u1c), scale),
         "L1-Pog(mm)": safe_div(calculate_signed_vertical_distance(pog, po_point, or_point, l1p), scale),
         "L1-NB(mm)": safe_div(signed_perp_distance_anterior(l1p, n_point, b_point), scale),
         "L1-MP(mm)": safe_div(calculate_perpendicular_distance_to_line(l1p, me, mp_p), scale),
         "L1-APog(mm)": safe_div(signed_perp_distance_anterior(l1p, a_point, pog), scale),
-        "L1p-N(自然)(mm)": safe_div(calculate_natural_pos_level_distance(n_point, l1p), scale),
-        "L1p-Pog(自然)(mm)": safe_div(calculate_natural_pos_level_distance(pog, l1p), scale),
-        "L1c-N(自然)(mm)": safe_div(calculate_natural_pos_level_distance(n_point, l1c), scale),
-        "L1c-Pog(自然)(mm)": safe_div(calculate_natural_pos_level_distance(pog, l1c), scale),
+        f"L1p-N({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(n_point, l1p), scale),
+        f"L1p-Pog({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(pog, l1p), scale),
+        f"L1c-N({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(n_point, l1c), scale),
+        f"L1c-Pog({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(pog, l1c), scale),
         "Holdaway ratio": safe_div(calculate_perpendicular_distance_to_line(pog, n_point, b_point), calculate_perpendicular_distance_to_line(l1p, n_point, b_point)),
         "U1-SN(°)": calculate_angle_between_vectors(s_point, n_point, u1p, u1a),
         "U1-NA(°)": calculate_angle_between_vectors(a_point, n_point, u1p, u1a),
@@ -612,34 +622,34 @@ def metric_value_dict(points_dict: Dict[str, Tuple[float, float]]) -> Dict[str, 
         "OPf-SN(°)": calculate_angle_between_vectors(s_point, n_point, ul6a_m, l4),
         "OPf-FH(°)": calculate_angle_between_vectors(po_point, or_point, ul6a_m, l4),
         "L1-OP(mm)": safe_div(calculate_perpendicular_distance_to_line(l1p, ul6a_m, l4), scale),
-        "sSn-glabella(自然)(mm)": safe_div(calculate_natural_pos_level_distance(glabella, sn), scale),
-        "UL-Sn(自然)(mm)": safe_div(signed_horizontal_distance(ul, sn, positive_when_front=True), scale),
-        "LL-Sn(自然)(mm)": safe_div(signed_horizontal_distance(ll, sn, positive_when_front=True), scale),
-        "Ms-Sn(自然)(mm)": safe_div(signed_horizontal_distance(ms, sn, positive_when_front=False), scale),
-        "sPog-Sn(自然)(mm)": safe_div(signed_horizontal_distance(s_pog, sn, positive_when_front=False), scale),
+        f"sSn-glabella({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(glabella, sn), scale),
+        f"UL-Sn({NATURAL_LABEL})(mm)": safe_div(signed_horizontal_distance(ul, sn, positive_when_front=True), scale),
+        f"LL-Sn({NATURAL_LABEL})(mm)": safe_div(signed_horizontal_distance(ll, sn, positive_when_front=True), scale),
+        f"Ms-Sn({NATURAL_LABEL})(mm)": safe_div(signed_horizontal_distance(ms, sn, positive_when_front=False), scale),
+        f"sPog-Sn({NATURAL_LABEL})(mm)": safe_div(signed_horizontal_distance(s_pog, sn, positive_when_front=False), scale),
         "Sn-Stoms(mm)": safe_div(calculate_distance(sn, stoms), scale),
         "LL-sPogUL(mm)": safe_div(calculate_signed_perpendicular_distance(ll, ul, s_pog), scale),
         "Gl-Sn-sPog(°)": calculate_angle_at_center(glabella, sn, s_pog),
         "ANS-Stoms(mm)": safe_div(calculate_distance(ans, stoms), scale),
-        "Sn-A(自然)(mm)": safe_div(calculate_natural_pos_level_distance(a_point, sn), scale),
-        "Sn-N h(自然)(mm)": safe_div(calculate_natural_pos_level_distance(n_point, sn), scale),
-        "Sn-N v(自然)(mm)": safe_div(calculate_natural_pos_vertical_distance(n_point, sn), scale),
-        "Sn-ANS h(自然)(mm)": safe_div(calculate_natural_pos_level_distance(ans, sn), scale),
-        "Sn-ANS v(自然)(mm)": safe_div(calculate_natural_pos_vertical_distance(ans, sn), scale),
-        "U1p-Sn(自然)(mm)": safe_div(calculate_natural_pos_level_distance(u1p, sn), scale),
-        "U1p-sPog(自然)(mm)": safe_div(calculate_natural_pos_level_distance(u1p, s_pog), scale),
+        f"Sn-A({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(a_point, sn), scale),
+        f"Sn-N h({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(n_point, sn), scale),
+        f"Sn-N v({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_vertical_distance(n_point, sn), scale),
+        f"Sn-ANS h({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(ans, sn), scale),
+        f"Sn-ANS v({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_vertical_distance(ans, sn), scale),
+        f"U1p-Sn({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(u1p, sn), scale),
+        f"U1p-sPog({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(u1p, s_pog), scale),
         "U1p-UL(mm)": safe_div(calculate_natural_pos_level_distance(u1p, ul), scale),
-        "U1ta-Sn(自然)(mm)": safe_div(calculate_natural_pos_level_distance(u1ta, sn), scale),
-        "U1ta-sPog(自然)(mm)": safe_div(calculate_natural_pos_level_distance(u1ta, s_pog), scale),
+        f"U1ta-Sn({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(u1ta, sn), scale),
+        f"U1ta-sPog({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(u1ta, s_pog), scale),
         "U1ta-UL(mm)": safe_div(calculate_natural_pos_level_distance(u1ta, ul), scale),
-        "U1c-Sn(自然)(mm)": safe_div(calculate_natural_pos_level_distance(u1c, sn), scale),
-        "U1c-sPog(自然)(mm)": safe_div(calculate_natural_pos_level_distance(u1c, s_pog), scale),
+        f"U1c-Sn({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(u1c, sn), scale),
+        f"U1c-sPog({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(u1c, s_pog), scale),
         "U1c-UL(mm)": safe_div(calculate_natural_pos_level_distance(u1c, ul), scale),
-        "L1p-Sn(自然)(mm)": safe_div(calculate_natural_pos_level_distance(l1p, sn), scale),
-        "L1p-sPog(自然)(mm)": safe_div(calculate_natural_pos_level_distance(l1p, s_pog), scale),
+        f"L1p-Sn({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(l1p, sn), scale),
+        f"L1p-sPog({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(l1p, s_pog), scale),
         "L1p-UL(mm)": safe_div(calculate_natural_pos_level_distance(l1p, ul), scale),
-        "L1c-Sn(自然)(mm)": safe_div(calculate_natural_pos_level_distance(l1c, sn), scale),
-        "L1c-sPog(自然)(mm)": safe_div(calculate_natural_pos_level_distance(l1c, s_pog), scale),
+        f"L1c-Sn({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(l1c, sn), scale),
+        f"L1c-sPog({NATURAL_LABEL})(mm)": safe_div(calculate_natural_pos_level_distance(l1c, s_pog), scale),
         "L1c-UL(mm)": safe_div(calculate_natural_pos_level_distance(l1c, ul), scale),
         "Stomi-U1p(mm)": safe_div(calculate_natural_pos_vertical_distance(stomi, u1p), scale),
         "Stoms-U1p(mm)": safe_div(calculate_natural_pos_vertical_distance(stoms, u1p), scale),
@@ -649,7 +659,7 @@ def metric_value_dict(points_dict: Dict[str, Tuple[float, float]]) -> Dict[str, 
 
 
 # ========================
-# 数据读取与构造
+# Data loading and construction
 # ========================
 def patient_name_from_image(image_name: str) -> str:
     base = os.path.splitext(normalize_text(image_name))[0]
@@ -688,7 +698,7 @@ def get_image_center(image_path: str):
 
 
 def rotate_image_around_center(image, angle_deg):
-    """围绕图像中心顺时针旋转图像 angle_deg 度。"""
+    """Rotate an image clockwise by angle_deg around its center."""
     import cv2
     if angle_deg == 0:
         return image.copy()
@@ -721,7 +731,7 @@ def save_landmark_visualization(image_path: str, image_name: str, angle: float, 
     suffix = image_suffix_from_name(image_name)
     image = cv2.imread(image_path)
     if image is None:
-        print(f"[Warning] 无法读取图像，跳过可视化: {image_path}")
+        print(f"[Warning] Could not read image; skipping visualization: {image_path}")
         return
 
     rotated_image = rotate_image_around_center(image, angle)
@@ -745,13 +755,13 @@ def load_rotation_map(path: str) -> Dict[str, float]:
         header = next(reader, None)
         for line_no, row in enumerate(reader, start=2):
             if len(row) != 2:
-                print(f"[Warning] rotation.csv 第 {line_no} 行字段数异常，已跳过: {row}")
+                print(f"[Warning] Invalid field count on rotation.csv line {line_no}; skipped: {row}")
                 continue
             name = normalize_text(row[0])
             try:
                 rotation_map[name] = float(row[1])
             except ValueError:
-                print(f"[Warning] rotation.csv 第 {line_no} 行角度不是数字，已跳过: {row}")
+                print(f"[Warning] Non-numeric angle on rotation.csv line {line_no}; skipped: {row}")
     return rotation_map
 
 
@@ -788,13 +798,13 @@ def find_patient_info_columns(sheet):
     name_col = None
     batch_col = None
     for col_idx, main_header in enumerate(filled_first_header, start=1):
-        if main_header == "姓名":
+        if main_header == LEGACY_NAME_HEADER:
             name_col = col_idx
-        elif main_header == "批次":
+        elif main_header == LEGACY_BATCH_HEADER:
             batch_col = col_idx
 
     if name_col is None or batch_col is None:
-        raise ValueError("患者基本信息表中未找到 姓名 或 批次 列")
+        raise ValueError("The subject information workbook must contain name and batch columns.")
     return name_col, batch_col
 
 
@@ -818,10 +828,10 @@ def load_patient_split(path: str) -> Dict[str, str]:
         elif batch in TEST_BATCHES:
             split_map[name] = "test"
         else:
-            print(f"[Warning] 患者 {name} 批次={batch} 不在训练/测试规则内，已跳过")
+            print(f"[Warning] Subject {name} has unrecognized batch {batch}; skipped.")
 
     workbook.close()
-    print(f"[Info] 患者批次表：有效划分 {len(split_map)} 位，批次为空跳过 {skipped_blank_batch} 位")
+    print(f"[Info] Subject batch table: {len(split_map)} valid assignments; skipped {skipped_blank_batch} blank batches.")
     return split_map
 
 
@@ -836,14 +846,14 @@ def calculate_metrics_for_image(
         return None
     angle = rotation_map.get(image_name)
     if angle is None:
-        print(f"[Warning] 缺少旋转角度: {image_name}，已使用 0")
+        print(f"[Warning] Missing rotation angle for {image_name}; using 0.")
         angle = 0.0
 
     patient_name = patient_name_from_image(image_name)
     suffix = image_suffix_from_name(image_name)
     image_path = find_image_path(patient_name, suffix)
     if image_path is None:
-        print(f"[Warning] 找不到原始图像，无法获取图像中心，回退围绕原点旋转: {image_name}")
+        print(f"[Warning] Original image not found; cannot determine its center, so rotating around the origin: {image_name}")
         rotated_points = rotate_points(points, angle)
     else:
         center = get_image_center(image_path)
@@ -860,11 +870,11 @@ def build_dataset():
     post_measurements = read_measurement_list(POST_MEASUREMENTS_FILE)
 
     if len(pre_measurements) != 50:
-        print(f"[Warning] pre_measurements.txt 当前读取到 {len(pre_measurements)} 个指标，不是描述中的 50 个")
+        print(f"[Warning] pre_measurements.txt contains {len(pre_measurements)} metrics instead of the expected 50.")
     if len(delta_measurements) != 11:
-        print(f"[Warning] post-pre_measurements.txt 当前读取到 {len(delta_measurements)} 个指标，不是描述中的 11 个")
+        print(f"[Warning] post-pre_measurements.txt contains {len(delta_measurements)} metrics instead of the expected 11.")
     if len(post_measurements) != 6:
-        print(f"[Warning] post_measurements.txt 当前读取到 {len(post_measurements)} 个指标，不是描述中的 6 个")
+        print(f"[Warning] post_measurements.txt contains {len(post_measurements)} metrics instead of the expected 6.")
 
     patient_split = load_patient_split(PATIENT_INFO_EXCEL)
     rotation_map = load_rotation_map(ROTATION_CSV)
@@ -873,7 +883,7 @@ def build_dataset():
 
     if ENABLE_VISUALIZATION:
         os.makedirs(VIS_OUTPUT_DIR, exist_ok=True)
-        print(f"[Info] 已启用可视化，标志点可视化将保存到: {VIS_OUTPUT_DIR}")
+        print(f"[Info] Visualization enabled; landmark figures will be saved to: {VIS_OUTPUT_DIR}")
 
     rows = []
     skipped = []
@@ -884,10 +894,10 @@ def build_dataset():
         post_metrics = calculate_metrics_for_image(post_image, post_points, rotation_map, visualize=ENABLE_VISUALIZATION)
 
         if pre_metrics is None or post_metrics is None:
-            skipped.append({"姓名": patient_name, "原因": "缺少 pre 或 post 标注点"})
+            skipped.append({"name": patient_name, "reason": "Missing pre- or post-treatment landmarks"})
             continue
 
-        row = {"姓名": patient_name, "split": split}
+        row = {"name": patient_name, "split": split}
         has_nan = False
 
         for metric in pre_measurements:
@@ -908,7 +918,7 @@ def build_dataset():
             has_nan = has_nan or pd.isna(value)
 
         if has_nan:
-            skipped.append({"姓名": patient_name, "原因": "指标计算出现空值或无效值"})
+            skipped.append({"name": patient_name, "reason": "Metric calculation returned a missing or invalid value"})
             continue
 
         rows.append(row)
@@ -919,24 +929,24 @@ def build_dataset():
 
     feature_columns = [f"pre__{metric}" for metric in pre_measurements] + [f"delta_post_pre__{metric}" for metric in delta_measurements]
     target_columns = [f"target_post__{metric}" for metric in post_measurements]
-    id_columns = ["姓名"]
+    id_columns = ["name"]
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    # 按要求：一个任务只产出一个 all_dataset.csv（覆盖），训/测划分由后续训练代码基于此文件完成。
+    # Write one all_dataset.csv per task; the downstream trainer performs the train/test split.
     all_df.to_csv(os.path.join(OUTPUT_DIR, "all_dataset.csv"), index=False, encoding="utf-8-sig")
-    # 清理旧版遗留的子文件，保持输出目录整洁
+    # Remove obsolete files from earlier versions to keep the output directory clean.
     for legacy in ["train_features.csv", "train_targets.csv", "test_features.csv", "test_targets.csv", "skipped_patients.csv"]:
         legacy_path = os.path.join(OUTPUT_DIR, legacy)
         if os.path.exists(legacy_path):
             os.remove(legacy_path)
 
-    print(f"[Success] 数据集已输出到: {OUTPUT_DIR}")
-    print(f"[Info] 全部可用样本: {len(all_df)}")
-    print(f"[Info] 训练集样本: {len(train_df)}")
-    print(f"[Info] 测试集样本: {len(test_df)}")
-    print(f"[Info] 输入特征数: {len(feature_columns)} = pre {len(pre_measurements)} + post-pre {len(delta_measurements)}")
-    print(f"[Info] 输出标签数: {len(target_columns)}")
-    print(f"[Info] 跳过患者: {len(skipped)}")
+    print(f"[Success] Dataset written to: {OUTPUT_DIR}")
+    print(f"[Info] Usable samples: {len(all_df)}")
+    print(f"[Info] Training samples: {len(train_df)}")
+    print(f"[Info] Test samples: {len(test_df)}")
+    print(f"[Info] Input features: {len(feature_columns)} = pre {len(pre_measurements)} + post-pre {len(delta_measurements)}")
+    print(f"[Info] Output targets: {len(target_columns)}")
+    print(f"[Info] Skipped subjects: {len(skipped)}")
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ Female/male beauty-score prediction with random split and paper-friendly visuali
 
 Data policy:
   - Run female.csv and male.csv sequentially in one invocation.
-  - Do not use supplementary data.
+  - Merge the additional male annotations before the randomized split.
   - Randomly split with test_size=0.2 and random_state=42.
 
 Outputs are written beneath the local outputs directory, with one report.md
@@ -65,14 +65,14 @@ MODEL_SELECTION_METRICS = [
     ("MAE", True, 1.0),
     ("RMSE", True, 1.0),
 ]
-MODEL_SELECTION_DESCRIPTION = "综合排名：R2↑、MAE↓、RMSE↓ 等权平均名次"
+MODEL_SELECTION_DESCRIPTION = "Overall ranking: equal-weight mean ranks for R2↑, MAE↓, and RMSE↓"
 SENSITIVITY_SELECTION_METRICS = [
     *MODEL_SELECTION_METRICS,
     ("Acc@0.5score", False, 1.0),
     ("Acc@1.0score", False, 1.0),
 ]
 SENSITIVITY_SELECTION_DESCRIPTION = (
-    "敏感性排名：R2↑、MAE↓、RMSE↓、Acc@0.5score↑、Acc@1.0score↑ 等权平均名次"
+    "Sensitivity ranking: equal-weight mean ranks for R2↑, MAE↓, RMSE↓, Acc@0.5score↑, and Acc@1.0score↑"
 )
 
 plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial Unicode MS", "DejaVu Sans"]
@@ -156,9 +156,9 @@ def load_dataset_random_only():
     df = pd.read_csv(DATASET_CSV, encoding="utf-8-sig")
     feature_columns = [col for col in df.columns if col.startswith(base.FEATURE_PREFIX)]
     if not feature_columns:
-        raise ValueError(f"{DATASET_CSV} 中没有找到 {base.FEATURE_PREFIX} 开头的 measurement 特征列")
+        raise ValueError(f"No measurement feature columns starting with {base.FEATURE_PREFIX!r} were found in {DATASET_CSV}")
     if base.TARGET_COLUMN not in df.columns:
-        raise ValueError(f"{DATASET_CSV} 缺少回归目标列: {base.TARGET_COLUMN}")
+        raise ValueError(f"Regression target column {base.TARGET_COLUMN!r} is missing from {DATASET_CSV}")
 
     df = df.dropna(subset=feature_columns + [base.TARGET_COLUMN]).reset_index(drop=True)
     if base.AUX_CLASS_COLUMN not in df.columns:
@@ -397,7 +397,7 @@ def plot_top30_overall_correlation_clustermap(best_model_name, X_all, feature_na
             break
 
     if len(selected_raw_features) < 2:
-        print("[Warning] 可用于 Top30 相关聚类的最优模型重要特征不足 2 个，已跳过。")
+        print("[Warning] Fewer than two important features are available for Top30 correlation clustering; skipped.")
         return
 
     top_features_df = pd.DataFrame(selected_rows)
@@ -416,7 +416,7 @@ def plot_top30_overall_correlation_clustermap(best_model_name, X_all, feature_na
     )
 
     if len(usable_raw_features) < 2:
-        print("[Warning] Top30 中非恒定、有效的输入特征不足 2 个，已跳过相关聚类图。")
+        print("[Warning] Fewer than two non-constant valid input features remain in Top30; correlation figures were skipped.")
         return
 
     display_map = {feature: clean_feature_name(feature) for feature in usable_raw_features}
@@ -431,7 +431,7 @@ def plot_top30_overall_correlation_clustermap(best_model_name, X_all, feature_na
         encoding="utf-8-sig",
     )
     if len(corr) < 2:
-        print("[Warning] Top30 Pearson 相关矩阵没有足够的有限值用于聚类，已跳过绘图。")
+        print("[Warning] The Top30 Pearson correlation matrix has too few finite values for clustering; figures were skipped.")
         return
 
     size = max(10, 0.46 * len(corr))
@@ -475,7 +475,7 @@ def plot_top30_overall_correlation_clustermap(best_model_name, X_all, feature_na
     grid.savefig(out_path, dpi=300, bbox_inches="tight")
     grid.savefig(out_path.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(grid.fig)
-    print(f"[Interrelation] 已生成最优模型 Top{len(corr)} Pearson 相关热力图与层次聚类图: {out_path}")
+    print(f"[Interrelation] Generated Top{len(corr)} Pearson correlation heatmap and hierarchical clustermap: {out_path}")
 
 
 def best_model_file_prefix(best_model_name: str) -> str:
@@ -521,10 +521,14 @@ def plot_best_model_regression_performance(best_model_name, y_test, y_pred):
 
 
 def get_sample_labels(test_ids: pd.DataFrame) -> list[str]:
-    if "样本名" in test_ids.columns:
-        values = test_ids["样本名"]
-    elif "姓名" in test_ids.columns:
-        values = test_ids["姓名"]
+    if "sample_name" in test_ids.columns:
+        values = test_ids["sample_name"]
+    elif base.LEGACY_SAMPLE_NAME_COLUMN in test_ids.columns:
+        values = test_ids[base.LEGACY_SAMPLE_NAME_COLUMN]
+    elif "name" in test_ids.columns:
+        values = test_ids["name"]
+    elif base.LEGACY_PERSON_NAME_COLUMN in test_ids.columns:
+        values = test_ids[base.LEGACY_PERSON_NAME_COLUMN]
     else:
         values = pd.Series(np.arange(len(test_ids)), index=test_ids.index).astype(str)
     labels = []
@@ -714,7 +718,7 @@ def run_best_model_shap_visualizations(best_model_name, best_model, X_train_scal
     try:
         shap_values, expected_value, eval_df, method = compute_shap_values(best_model, best_model_name, X_train_scaled, X_test_scaled)
     except Exception as error:
-        print(f"[Warning] 最优模型 SHAP 可视化失败: {error}")
+        print(f"[Warning] Best-model SHAP visualization failed: {error}")
         raise
 
     eval_display_df = eval_df.copy()
@@ -873,7 +877,7 @@ def verify_pdf_coverage(output_dir: Path):
             missing.append(png_path)
     if missing:
         preview = "\n".join(str(path) for path in missing[:10])
-        raise RuntimeError(f"以下非 interaction 图片缺少 PDF（共 {len(missing)} 个）:\n{preview}")
+        raise RuntimeError(f"The following non-interaction figures are missing PDF versions ({len(missing)} total):\n{preview}")
 
 
 def report_float(value, digits=4):
@@ -888,7 +892,7 @@ def build_sensitivity_analysis_for_dataset(sex_label: str, dataset_csv: Path):
     sensitivity_output_dir = SENSITIVITY_ROOT / sex_label
     metrics_path = primary_output_dir / "metrics" / "metrics_summary.csv"
     if not metrics_path.exists():
-        raise FileNotFoundError(f"缺少正式分析结果，无法生成敏感性分析: {metrics_path}")
+        raise FileNotFoundError(f"Official analysis results are missing; cannot generate sensitivity analysis: {metrics_path}")
 
     sensitivity_output_dir.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(primary_output_dir, sensitivity_output_dir, dirs_exist_ok=True)
@@ -1042,19 +1046,19 @@ def build_sensitivity_analysis_for_dataset(sex_label: str, dataset_csv: Path):
 
 def write_sensitivity_report(sensitivity_results):
     lines = []
-    lines.append("# 五指标模型选择敏感性分析\n\n")
-    lines.append("本目录是独立于正式三指标分析的敏感性输出。female 和 male 均复用正式分析已经训练完成的模型与相同随机划分；不重新训练，只改变模型选择排名。制图所需预测值从已保存模型即时重新计算，不保存逐样本预测文件。\n\n")
-    lines.append("## 排名方法\n\n")
-    lines.append("五个指标先各自在测试集模型之间计算名次：R2 越高名次越好，MAE/RMSE 越低名次越好，Acc≤0.5/Acc≤1.0 越高名次越好。并列值使用平均名次。\n\n")
+    lines.append("# Five-Metric Model-Selection Sensitivity Analysis\n\n")
+    lines.append("This directory contains sensitivity results separate from the official three-metric analysis. The female and male runs reuse the fitted models and random splits; models are not retrained. Only the ranking rule changes. Predictions needed for figures are recalculated from saved models, and per-subject prediction files are not saved.\n\n")
+    lines.append("## Ranking Method\n\n")
+    lines.append("Each metric is ranked across test-set models: higher R2 is better; lower MAE/RMSE is better; higher Acc@0.5/Acc@1.0 is better. Ties receive average ranks.\n\n")
     lines.append("$$Score_5=\\frac{rank_{R^2}+rank_{MAE}+rank_{RMSE}+rank_{Acc\\leq0.5}+rank_{Acc\\leq1.0}}{5}$$\n\n")
-    lines.append("Score5 越低越好。该分析用于检验“加入临床容差准确率后，最佳模型是否变化”，不替代正式三指标结论。\n\n")
-    lines.append("## 统一解释口径\n\n")
-    lines.append("每个性别只解释五指标排名选出的一个最佳模型。该模型的 SHAP 在全部测试样本上计算一次，随后 SHAP summary、SHAP bar、样本热图、waterfall、dependence/interaction、特征排名与 Top30 筛选全部复用这一次结果。\n\n")
-    lines.append("$$I_j=\frac{1}{N_{test}}\sum_{i=1}^{N_{test}}|\phi_{ij}|$$\n\n")
-    lines.append("Top30 是 `*_shap_feature_rank.csv` 的前 30 行，不再使用 permutation importance、模型内置重要性或跨模型平均重要性。Top30 Pearson 相关在该性别全部有效样本的原始特征值上计算：特征筛选口径是最佳模型 SHAP，相关系数口径是原始数据。辅助阈值分类仅保留在 CSV 指标中，不生成混淆矩阵或其他辅助分类图。\n\n")
+    lines.append("Lower Score5 is better. This analysis tests whether adding clinically relevant tolerance accuracy changes the selected model; it does not replace the official three-metric results.\n\n")
+    lines.append("## Consistent Interpretation Protocol\n\n")
+    lines.append("For each sex, interpret only the best model selected by the five-metric ranking. Compute SHAP values once for all test samples and reuse them for the SHAP summary, bar plot, sample heatmap, waterfall, dependence/interaction plots, feature ranking, and Top30 selection.\n\n")
+    lines.append(r"$$I_j=\frac{1}{N_{test}}\sum_{i=1}^{N_{test}}|\phi_{ij}|$$" "\n\n")
+    lines.append("Top30 consists of the first 30 rows of `*_shap_feature_rank.csv`; permutation importance, built-in model importance, and cross-model averages are not used. Pearson correlations are calculated from raw feature values for all valid samples in each sex cohort. SHAP from the best model determines feature selection, while raw data determine correlations. Auxiliary threshold-classification metrics are retained in CSV files only; no confusion matrix or other auxiliary classification figures are generated.\n\n")
 
-    lines.append("## 结果概览\n\n")
-    lines.append("| 数据 | 正式三指标最佳 | 敏感性五指标最佳 | Test R2 | MAE | RMSE | Acc≤0.5 | Acc≤1.0 |\n")
+    lines.append("## Results Overview\n\n")
+    lines.append("| Cohort | Official three-metric best | Sensitivity five-metric best | Test R2 | MAE | RMSE | Acc@0.5 | Acc@1.0 |\n")
     lines.append("|---|---|---|---:|---:|---:|---:|---:|\n")
     for result in sensitivity_results:
         row = result["best_row"]
@@ -1067,10 +1071,10 @@ def write_sensitivity_report(sensitivity_results):
     for index, result in enumerate(sensitivity_results, start=1):
         sex_label = result["sex"]
         lines.append(f"\n## {index + 2}. {sex_label}\n\n")
-        lines.append(f"- 正式三指标最佳：`{result['official_best_model']}`。\n")
-        lines.append(f"- 五指标敏感性最佳：`{result['best_model_name']}`。\n")
-        lines.append(f"- 样本：训练 {result['train_samples']}、测试 {result['test_samples']}；输入特征 {result['input_features']}。\n\n")
-        lines.append("| 五指标排名 | 模型 | Score5↓ | R2↑ | MAE↓ | RMSE↓ | Acc≤0.5↑ | Acc≤1.0↑ |\n")
+        lines.append(f"- Official three-metric best model: `{result['official_best_model']}`.\n")
+        lines.append(f"- Five-metric sensitivity best model: `{result['best_model_name']}`.\n")
+        lines.append(f"- Samples: {result['train_samples']} train, {result['test_samples']} test; input features: {result['input_features']}.\n\n")
+        lines.append("| Five-metric rank | Model | Score5↓ | R2↑ | MAE↓ | RMSE↓ | Acc@0.5↑ | Acc@1.0↑ |\n")
         lines.append("|---:|---|---:|---:|---:|---:|---:|---:|\n")
         test_metrics = result["metrics_df"][result["metrics_df"]["split"] == "test"]
         test_metrics = test_metrics.sort_values("model_selection_rank")
@@ -1080,17 +1084,17 @@ def write_sensitivity_report(sensitivity_results):
                 f"{report_float(row['R2'])} | {report_float(row['MAE'])} | {report_float(row['RMSE'])} | "
                 f"{report_float(row['Acc@0.5score'])} | {report_float(row['Acc@1.0score'])} |\n"
             )
-        lines.append("\n关键文件：\n\n")
-        lines.append(f"- 五指标排名：`{sex_label}/metrics/model_selection_ranking.csv`。\n")
-        lines.append(f"- 三指标与五指标对照：`{sex_label}/metrics/ranking_comparison_3_vs_5_metrics.csv`。\n")
-        lines.append(f"- 完整指标和模型：`{sex_label}/metrics/`、`{sex_label}/models/`。\n")
-        lines.append(f"- 全模型回归比较图：`{sex_label}/analysis/01_model_comparison/`。\n")
-        lines.append(f"- 五指标最佳模型回归图：`{sex_label}/analysis/02_best_model/01_performance/`。\n")
-        lines.append(f"- 唯一 SHAP 解释及排名：`{sex_label}/analysis/02_best_model/02_shap/`。\n")
-        lines.append(f"- 由同一 SHAP 排名筛出的 Top30 相关与聚类：`{sex_label}/analysis/02_best_model/03_top30_correlation/`。\n")
+        lines.append("\nKey files:\n\n")
+        lines.append(f"- Five-metric ranking: `{sex_label}/metrics/model_selection_ranking.csv`.\n")
+        lines.append(f"- Three- vs. five-metric comparison: `{sex_label}/metrics/ranking_comparison_3_vs_5_metrics.csv`.\n")
+        lines.append(f"- Full metrics and models: `{sex_label}/metrics/`, `{sex_label}/models/`.\n")
+        lines.append(f"- All-model regression comparison: `{sex_label}/analysis/01_model_comparison/`.\n")
+        lines.append(f"- Five-metric best-model regression figures: `{sex_label}/analysis/02_best_model/01_performance/`.\n")
+        lines.append(f"- SHAP interpretation and feature ranking: `{sex_label}/analysis/02_best_model/02_shap/`.\n")
+        lines.append(f"- Top30 correlation and clustering: `{sex_label}/analysis/02_best_model/03_top30_correlation/`.\n")
 
-    lines.append("\n## 输出格式\n\n")
-    lines.append("除批量 SHAP interaction 图仅保留 PNG 外，其余图均同时提供 PNG 和 PDF。female/male 子目录是完整副本，可独立读取；本报告位于敏感性分析根目录，性别子目录内不放报告。\n")
+    lines.append("\n## Output Formats\n\n")
+    lines.append("All figures are saved as both PNG and PDF, except bulk SHAP interaction figures, which are PNG-only. The female and male directories are self-contained; this report is stored at the sensitivity-analysis root.\n")
     SENSITIVITY_ROOT.mkdir(parents=True, exist_ok=True)
     report_path = SENSITIVITY_ROOT / "report.md"
     report_path.write_text("".join(lines), encoding="utf-8")
@@ -1109,66 +1113,66 @@ def regenerate_sensitivity_analysis_from_existing_outputs():
 
 def write_combined_report(run_results):
     lines = []
-    lines.append("# 女性 / 男性美观评分回归：随机划分训练与可视化报告\n\n")
-    lines.append("本报告由同一次脚本运行生成。女性与男性数据完全分开训练、调参、评估和解释；两者都只使用对应的原始 CSV，不混合样本，也不使用 supplementary 数据。\n\n")
+    lines.append("# Female and Male Beauty Score Regression: Random-Split Training and Visualization Report\n\n")
+    lines.append("This report is generated by one script run. Female and male cohorts are trained, tuned, evaluated, and interpreted separately. The additional male annotations are merged before the male cohort is randomly split.\n\n")
 
-    lines.append("## 1. 数据、划分与预处理方法\n\n")
-    lines.append(f"- 女性输入：`{DATASET_RUNS[0][1]}`，输出目录：`female/`。\n")
-    lines.append(f"- 男性输入：`{DATASET_RUNS[1][1]}`，输出目录：`male/`。\n")
-    lines.append(f"- 每套数据独立随机划分：`test_size={base.TEST_SIZE}`、`random_state={base.RANDOM_STATE}`、`shuffle=True`。\n")
-    lines.append("- 删除任一输入 measurement 或 `beauty_score` 缺失的样本；输入特征为全部 `measurement__*` 列。\n")
-    lines.append("- StandardScaler 仅在各自训练集上拟合，再应用到对应测试集，避免测试集信息进入缩放参数。\n\n")
-    lines.append("对任意输入特征或目标，标准化公式为：\n\n")
+    lines.append("## 1. Data, Split, and Preprocessing\n\n")
+    lines.append(f"- Female input: `{DATASET_RUNS[0][1]}`; output directory: `female/`.\n")
+    lines.append(f"- Male input: `{DATASET_RUNS[1][1]}`; output directory: `male/`.\n")
+    lines.append(f"- Each cohort is split independently with `test_size={base.TEST_SIZE}`, `random_state={base.RANDOM_STATE}`, and `shuffle=True`.\n")
+    lines.append("- Drop samples with a missing measurement or `beauty_score`; use all `measurement__*` columns as input features.\n")
+    lines.append("- Fit `StandardScaler` on each training set and apply it to the corresponding test set.\n\n")
+    lines.append("For any input feature or target, the standardization formula is:\n\n")
     lines.append("$$z=\\frac{x-\\mu_{train}}{\\sigma_{train}}$$\n\n")
-    lines.append("模型在标准化空间训练；预测评分在计算指标前通过 $x=z\\sigma_{train}+\\mu_{train}$ 还原到原始评分单位。\n\n")
+    lines.append("Models are trained in standardized space; inverse-transform predicted scores with $x=z\\sigma_{train}+\\mu_{train}$ before calculating metrics.\n\n")
 
-    lines.append("## 2. 评估指标和最优模型选择公式\n\n")
-    lines.append("设测试样本数为 $N$，真实评分为 $y_i$，预测评分为 $\\hat y_i$。\n\n")
+    lines.append("## 2. Evaluation Metrics and Model-Selection Formula\n\n")
+    lines.append("Let $N$ be the number of test samples, $y_i$ the observed score, and $\\hat y_i$ the predicted score.\n\n")
     lines.append("$$MAE=\\frac{1}{N}\\sum_{i=1}^{N}|y_i-\\hat y_i|$$\n\n")
     lines.append("$$RMSE=\\sqrt{\\frac{1}{N}\\sum_{i=1}^{N}(y_i-\\hat y_i)^2}$$\n\n")
     lines.append("$$R^2=1-\\frac{\\sum_i(y_i-\\hat y_i)^2}{\\sum_i(y_i-\\bar y)^2}$$\n\n")
-    lines.append("MAE、RMSE 越低越好；RMSE 对少量大误差更敏感。$R^2$ 越高越好，测试集上可以小于 0，表示模型还不如直接预测测试集均值。\n\n")
-    lines.append("绝对误差准确率为：\n\n")
+    lines.append("Lower MAE and RMSE are better; RMSE is more sensitive to a small number of large errors. Higher $R^2$ is better. A negative test-set $R^2$ indicates performance worse than predicting the test-set mean.\n\n")
+    lines.append("Absolute-error accuracy is defined as:\n\n")
     lines.append("$$Acc@\\delta=\\frac{1}{N}\\sum_i\\mathbf{1}(|\\hat y_i-y_i|\\leq\\delta),\\quad \\delta\\in\\{0.5,1.0\\}$$\n\n")
-    lines.append("相对误差准确率使用 $e_i=|\\hat y_i-y_i|/\\max(|y_i|,10^{-8})$，报告 $e_i\\leq5\\%$ 与 $e_i\\leq10\\%$ 的样本比例。\n\n")
-    lines.append(f"辅助分类把真实和预测评分分别按 `{base.BEAUTIFUL_THRESHOLD:g}` 分二类；Accuracy、Precision、Recall、F1 只作为 CSV/报告中的补充数值，不参与回归模型训练，也不生成混淆矩阵或其他辅助分类图。$F1=2PR/(P+R)$。\n\n")
-    lines.append("最终模型不是只按一个指标选择。每个模型分别获得 $R^2$ 降序名次、MAE 升序名次和 RMSE 升序名次，然后计算：\n\n")
+    lines.append("Relative error is $e_i=|\\hat y_i-y_i|/\\max(|y_i|,10^{-8})$; report the proportions with $e_i\\leq5\\%$ and $e_i\\leq10\\%$.\n\n")
+    lines.append(f"For auxiliary classification, observed and predicted scores are thresholded at `{base.BEAUTIFUL_THRESHOLD:g}`. Accuracy, precision, recall, and F1 are supplemental report values only; no classifier is trained and no confusion-matrix figures are generated. $F1=2PR/(P+R)$.\n\n")
+    lines.append("The final model is selected using three metrics. Rank models by descending $R^2$ and ascending MAE and RMSE, then calculate:\n\n")
     lines.append("$$SelectionScore=\\frac{rank_{R^2}+rank_{MAE}+rank_{RMSE}}{3}$$\n\n")
-    lines.append("SelectionScore 越小越好；完全并列使用平均名次。若综合分相同，再依次按更高 $R^2$、更低 MAE、更低 RMSE 决定。\n\n")
+    lines.append("Lower SelectionScore is better; ties use average ranks. Remaining ties are resolved by higher $R^2$, lower MAE, and then lower RMSE.\n\n")
 
-    lines.append("## 3. 特征解释与相关聚类方法\n\n")
-    lines.append("每个性别只对正式三指标选出的最佳模型做一套解释，并在全部测试样本上只计算一次 SHAP：线性模型使用 LinearExplainer，支持的树模型使用 TreeExplainer，其余模型（如 SVR、KNN）使用 KernelExplainer。SHAP 满足：\n\n")
+    lines.append("## 3. Feature Interpretation and Correlation Clustering\n\n")
+    lines.append("For each cohort, interpret only the best model selected by the official three-metric ranking. Compute SHAP values once for all test samples. Use LinearExplainer for linear models, TreeExplainer for supported tree models, and KernelExplainer for other models such as SVR and KNN. SHAP satisfies:\n\n")
     lines.append("$$f(x_i)=E[f(X)]+\\sum_j\\phi_{ij}$$\n\n")
-    lines.append("特征 $j$ 的总体重要性使用全部测试样本的平均绝对 SHAP：\n\n")
+    lines.append("Overall importance for feature $j$ is the mean absolute SHAP value across test samples:\n\n")
     lines.append("$$I_j=\\frac{1}{N_{test}}\\sum_{i=1}^{N_{test}}|\\phi_{ij}|$$\n\n")
-    lines.append("`*_shap_feature_rank.csv` 是唯一正式特征排名。SHAP summary、SHAP bar、样本热图、waterfall、dependence/interaction 都复用同一批 SHAP 值；不再计算跨模型平均重要性，也不再把 permutation importance、模型内置重要性或系数图混入正式解释。\n\n")
-    lines.append("Top30 相关图严格取上述 SHAP 排名表前 30 行，因此 Top30 名单与 SHAP bar/rank 的前 30 名完全一致。随后在该性别全部有效样本（训练集与测试集合并）的原始特征值上计算 Pearson 相关：\n\n")
+    lines.append("`*_shap_feature_rank.csv` is the sole official feature ranking. SHAP summary, bar, sample heatmap, waterfall, dependence, and interaction figures all reuse the same SHAP values. Cross-model averages, permutation importance, built-in model importance, and coefficient plots are excluded from the official interpretation.\n\n")
+    lines.append("Top30 correlation figures use the first 30 rows of this SHAP ranking, so the feature list matches the top 30 entries in the SHAP bar/rank. Pearson correlations are then calculated from raw feature values across all valid samples in each cohort (training and test combined):\n\n")
     lines.append("$$r_{ij}=\\frac{\\sum_n(x_{ni}-\\bar x_i)(x_{nj}-\\bar x_j)}{\\sqrt{\\sum_n(x_{ni}-\\bar x_i)^2}\\sqrt{\\sum_n(x_{nj}-\\bar x_j)^2}}$$\n\n")
-    lines.append("聚类把相关矩阵第 $i$ 行视为特征的相关模式 $p_i=(r_{i1},...,r_{im})$，采用欧氏距离和 average linkage：\n\n")
+    lines.append("For clustering, treat row $i$ of the correlation matrix as the correlation profile $p_i=(r_{i1},...,r_{im})$ and use Euclidean distance with average linkage:\n\n")
     lines.append("$$d(i,j)=\\sqrt{\\sum_k(r_{ik}-r_{jk})^2},\\qquad D(A,B)=\\frac{1}{|A||B|}\\sum_{i\\in A}\\sum_{j\\in B}d(i,j)$$\n\n")
-    lines.append("因此同一簇表示“对全部 Top30 特征的相关模式相似”，并不代表因果关系，也不等同于两个特征之间的直接 Pearson 相关一定最高。clustermap 会按树状聚类重排显示顺序，但 `top30_overall_features.csv` 保留 SHAP 原始排名顺序。\n\n")
+    lines.append("Features in one cluster have similar correlation profiles across the Top30 set. This does not imply causality or guarantee the highest direct Pearson correlation between any pair. The clustermap reorders features by hierarchical clustering; `top30_overall_features.csv` preserves the original SHAP ranking.\n\n")
 
-    lines.append("## 4. 可视化阅读说明\n\n")
-    lines.append("| 图表 | 计算内容与阅读方法 |\n")
+    lines.append("## 4. Figure Guide\n\n")
+    lines.append("| Figure | Interpretation |\n")
     lines.append("|---|---|\n")
-    lines.append("| Test R2 / MAE 柱状图 | 比较各模型测试集解释度与平均绝对误差。R2 越高、MAE 越低越好。 |\n")
-    lines.append("| MAE/RMSE 与 R2/Accuracy 曲线 | 模型按综合名次排列，用于观察不同指标是否给出一致结论。 |\n")
-    lines.append("| 多指标 grouped bar / heatmap | 展示原始指标值；不同指标量纲不同，应在同一指标内横向比较，不应直接用柱高跨指标判断。 |\n")
-    lines.append("| Train/Test R2 gap | $gap=R^2_{train}-R^2_{test}$；较大的正差值提示泛化落差，但应结合测试样本量和测试 R2 一起解释。 |\n")
-    lines.append("| 绝对误差箱线图 | 箱体为四分位范围，中线为中位数；叠加散点展示每个测试样本误差。 |\n")
-    lines.append("| 有符号误差小提琴图 | 误差定义为 `pred-true`；大于 0 表示高估，小于 0 表示低估，宽度表示密度。 |\n")
-    lines.append("| True vs Predicted scatter | 红色 $y=x$ 为理想预测；点越贴近对角线越好。 |\n")
-    lines.append("| SHAP summary | 横轴为 SHAP 贡献方向和大小，颜色为特征值高低；同一特征两侧分布反映非线性或个体差异。 |\n")
-    lines.append("| SHAP bar / rank | 使用 mean $|SHAP|$ 排序，只表示贡献强度，不直接表示正负方向。 |\n")
-    lines.append("| SHAP heatmap | 行为测试解释样本、列为重要特征、颜色为该样本上的 SHAP 正负贡献。 |\n")
-    lines.append("| SHAP waterfall | 从 expected value 出发逐项累加单样本 SHAP，展示为何得到该样本预测。 |\n")
-    lines.append("| SHAP interaction/dependence | 横轴为特征值、纵轴为该特征 SHAP，颜色为另一特征；用于观察非线性及条件关系，不证明因果。 |\n")
-    lines.append("| Top30 correlation heatmap / clustermap | 色块为 Pearson $r$；树枝为相关模式的层次聚类距离。 |\n\n")
+    lines.append("| Test R2 / MAE bar plots | Compare test-set explained variance and mean absolute error; higher R2 and lower MAE are better. |\n")
+    lines.append("| MAE/RMSE and R2/accuracy curves | Models are ordered by overall rank to show whether metrics agree. |\n")
+    lines.append("| Grouped bars / multi-metric heatmap | Shows raw metric values. Compare models within a metric because metrics use different scales. |\n")
+    lines.append("| Train/test R2 gap | $gap=R^2_{train}-R^2_{test}$. A large positive gap may indicate weaker generalization and should be interpreted with test-set size and test R2. |\n")
+    lines.append("| Absolute-error boxplot | The box spans the interquartile range, the line marks the median, and overlaid points show individual test errors. |\n")
+    lines.append("| Signed-error violin plot | Error is `pred-true`; positive values indicate overprediction, negative values underprediction, and width indicates density. |\n")
+    lines.append("| True vs. predicted scatter | The red $y=x$ line marks ideal predictions; points closer to the diagonal indicate better agreement. |\n")
+    lines.append("| SHAP summary | The horizontal axis shows SHAP contribution direction and magnitude; color shows feature value. Spread can indicate nonlinear or sample-specific effects. |\n")
+    lines.append("| SHAP bar / rank | Orders features by mean $|SHAP|$ and shows contribution magnitude, not direction. |\n")
+    lines.append("| SHAP heatmap | Rows are test samples, columns are important features, and color shows signed SHAP contributions. |\n")
+    lines.append("| SHAP waterfall | Adds individual SHAP values to the expected value to explain one sample prediction. |\n")
+    lines.append("| SHAP interaction / dependence | Plots feature value against SHAP value, with color for another feature; useful for exploring conditional patterns, not causality. |\n")
+    lines.append("| Top30 correlation heatmap / clustermap | Cells show Pearson $r$; branches show hierarchical distances between correlation profiles. |\n\n")
 
-    lines.append("## 5. 女性与男性结果\n\n")
+    lines.append("## 5. Female and Male Results\n\n")
     for result in run_results:
         sex_label = result["sex"]
-        sex_cn = "女性" if sex_label == "female" else "男性"
+        sex_display = "Female" if sex_label == "female" else "Male"
         info = result["dataset_info"]
         metrics_df = result["metrics_df"]
         test_metrics = metrics_df[metrics_df["split"] == "test"].sort_values("model_selection_rank")
@@ -1178,20 +1182,20 @@ def write_combined_report(run_results):
         best_train = train_metrics[train_metrics["model"] == best_model].iloc[0]
         r2_gap = float(best_train["R2"] - best_test["R2"])
 
-        lines.append(f"### 5.{1 if sex_label == 'female' else 2} {sex_cn}（`{sex_label}/`）\n\n")
-        lines.append("| 项目 | 结果 |\n")
+        lines.append(f"### 5.{1 if sex_label == 'female' else 2} {sex_display} (`{sex_label}/`)\n\n")
+        lines.append("| Item | Result |\n")
         lines.append("|---|---:|\n")
-        lines.append(f"| 有效样本数 | {info['total_samples_after_dropna']} |\n")
-        lines.append(f"| 训练 / 测试样本 | {info['train_samples']} / {info['test_samples']} |\n")
-        lines.append(f"| 输入特征数 | {info['input_features']} |\n")
-        lines.append(f"| 最佳模型 | **{best_model}** |\n")
+        lines.append(f"| Valid samples | {info['total_samples_after_dropna']} |\n")
+        lines.append(f"| Train / test samples | {info['train_samples']} / {info['test_samples']} |\n")
+        lines.append(f"| Input features | {info['input_features']} |\n")
+        lines.append(f"| Best model | **{best_model}** |\n")
         lines.append(f"| SelectionScore | {report_float(best_test['model_selection_score'])} |\n")
         lines.append(f"| Test R2 / MAE / RMSE | {report_float(best_test['R2'])} / {report_float(best_test['MAE'])} / {report_float(best_test['RMSE'])} |\n")
         lines.append(f"| Acc@0.5 / Acc@1.0 | {report_float(best_test['Acc@0.5score'])} / {report_float(best_test['Acc@1.0score'])} |\n")
         lines.append(f"| Train R2 / Test R2 / gap | {report_float(best_train['R2'])} / {report_float(best_test['R2'])} / {report_float(r2_gap)} |\n\n")
 
-        lines.append("测试集完整模型排名：\n\n")
-        lines.append("| 排名 | 模型 | 综合分↓ | MAE↓ | RMSE↓ | R2↑ | Acc≤0.5 | Acc≤1.0 | 辅助Acc | 辅助F1 |\n")
+        lines.append("Complete test-set model ranking:\n\n")
+        lines.append("| Rank | Model | Overall score↓ | MAE↓ | RMSE↓ | R2↑ | Acc@0.5 | Acc@1.0 | Auxiliary accuracy | Auxiliary F1 |\n")
         lines.append("|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|\n")
         for _, row in test_metrics.iterrows():
             lines.append(
@@ -1206,27 +1210,27 @@ def write_combined_report(run_results):
         importance_df = pd.read_csv(importance_path, encoding="utf-8-sig").head(15)
         methods = ", ".join(sorted(importance_df["explain_method"].astype(str).unique()))
         explained_samples = int(importance_df["explained_test_samples"].iloc[0])
-        lines.append(f"\n最佳模型 Top15 特征（解释方法：`{methods}`；解释全部 {explained_samples} 个测试样本）：\n\n")
-        lines.append("| 排名 | 特征 | mean abs(SHAP) |\n")
+        lines.append(f"\nBest-model Top 15 features (explainer: `{methods}`; all {explained_samples} test samples):\n\n")
+        lines.append("| Rank | Feature | mean abs(SHAP) |\n")
         lines.append("|---:|---|---:|\n")
         for _, row in importance_df.iterrows():
             lines.append(f"| {int(row['rank'])} | `{row['feature']}` | {report_float(row['mean_abs_shap'], 6)} |\n")
 
-        lines.append("\n关键文件：\n\n")
-        lines.append(f"- 完整指标：`{sex_label}/metrics/metrics_summary.csv`；综合排名：`{sex_label}/metrics/model_selection_ranking.csv`。\n")
-        lines.append(f"- 超参数搜索：`{sex_label}/metrics/hyperparameter_search_summary.csv`。\n")
-        lines.append(f"- 模型与 scaler：`{sex_label}/models/`；不保存逐样本预测文件。\n")
-        lines.append(f"- 全模型回归比较图：`{sex_label}/analysis/01_model_comparison/`。\n")
-        lines.append(f"- 最佳模型回归散点：`{sex_label}/analysis/02_best_model/01_performance/`。\n")
-        lines.append(f"- 唯一 SHAP 解释、逐样本 SHAP 值与排名：`{sex_label}/analysis/02_best_model/02_shap/`。\n")
-        lines.append(f"- Top30 名单、相关矩阵和聚类图：`{sex_label}/analysis/02_best_model/03_top30_correlation/`。\n\n")
+        lines.append("\nKey files:\n\n")
+        lines.append(f"- Full metrics: `{sex_label}/metrics/metrics_summary.csv`; overall ranking: `{sex_label}/metrics/model_selection_ranking.csv`.\n")
+        lines.append(f"- Hyperparameter search: `{sex_label}/metrics/hyperparameter_search_summary.csv`.\n")
+        lines.append(f"- Models and scalers: `{sex_label}/models/`; per-sample prediction files are not saved.\n")
+        lines.append(f"- All-model regression comparison: `{sex_label}/analysis/01_model_comparison/`.\n")
+        lines.append(f"- Best-model regression scatter: `{sex_label}/analysis/02_best_model/01_performance/`.\n")
+        lines.append(f"- SHAP interpretation, per-sample values, and ranking: `{sex_label}/analysis/02_best_model/02_shap/`.\n")
+        lines.append(f"- Top30 list, correlation matrix, and clustering: `{sex_label}/analysis/02_best_model/03_top30_correlation/`.\n\n")
 
-    lines.append("## 6. 输出格式约定\n\n")
-    lines.append("所有普通图均同时输出 `.png` 和同名 `.pdf`。由于 Top10 SHAP 两两组合会为每个性别产生大量文件，`female/analysis/02_best_model/02_shap/interactions/` 与 `male/.../interactions/` 仅保留 PNG。CSV 保存指标、SHAP 值、SHAP 排名与相关矩阵，便于重新制图和统计复核；不保存逐样本预测 CSV。性别子目录内部不生成 `report.md`，本文件是正式三指标分析的唯一报告；五指标敏感性分析在其独立根目录另有一份总报告。\n")
+    lines.append("## 6. Output Format\n\n")
+    lines.append("All standard figures are saved as both `.png` and `.pdf`. Bulk Top10 SHAP interaction plots generate many files and are PNG-only. CSV files preserve metrics, SHAP values and rankings, and correlation matrices for review and replotting; per-sample prediction CSVs are not saved. No `report.md` is written inside the female or male directories; this is the official three-metric report, while the five-metric sensitivity analysis has a separate report.\n")
 
     report_path = OUTPUT_ROOT / "report.md"
     report_path.write_text("".join(lines), encoding="utf-8")
-    print(f"[Report] 已生成女性/男性合并报告: {report_path}")
+    print(f"[Report] Generated combined female/male report: {report_path}")
 
 
 def main():
