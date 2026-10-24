@@ -1,0 +1,22 @@
+# Local data and generated artifacts
+inputs/
+derived_data/
+outputs/
+
+# Personal or experimental data files
+*.xlsx
+*.xls
+*.csv
+*.json
+*.bmp
+*.png
+*.jpg
+*.jpeg
+*.joblib
+*.pkl
+
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
